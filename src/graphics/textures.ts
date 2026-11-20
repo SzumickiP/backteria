@@ -414,6 +414,31 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
     ctx.fill();
   }
 
+  // Rybosomy: gęsta, drobna ziarnistość cytoplazmy (jak na zdjęciu z mikroskopu elektronowego).
+  for (let i = 0; i < 140; i++) {
+    const rx = rng.realInRange(-hl + 6, hl - 6);
+    const ry = rng.realInRange(-hw + 5, hw - 5);
+    ctx.globalAlpha = 0.18 + rng.frac() * 0.22;
+    ctx.fillStyle = p.granule;
+    ctx.beginPath();
+    ctx.arc(rx, ry, 0.7 + rng.frac() * 0.9, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = p.light;
+    ctx.beginPath();
+    ctx.arc(rx - 0.6, ry - 0.6, 0.6, 0, TAU);
+    ctx.fill();
+  }
+  // Plazmidy: małe kółka DNA obok nukleoidu.
+  ctx.globalAlpha = 0.45;
+  ctx.strokeStyle = p.granule;
+  ctx.lineWidth = 1.2;
+  for (const [px, py, pr] of [[hl * 0.6, -hw * 0.3, 4.5], [-hl * 0.62, hw * 0.35, 3.8], [hl * 0.15, hw * 0.5, 3.2]]) {
+    ctx.beginPath();
+    ctx.ellipse(px, py, pr, pr * 0.75, rng.frac() * Math.PI, 0, TAU);
+    ctx.stroke();
+  }
+
   // Nukleoid: poskręcana nić DNA w środku komórki.
   ctx.filter = 'none';
   ctx.globalAlpha = 0.5;
@@ -447,6 +472,20 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
   ctx.beginPath();
   ctx.ellipse(-hl * 0.32, -hw * 0.56, hl * 0.14, hw * 0.07, 0, 0, TAU);
   ctx.fill();
+  ctx.restore();
+
+  // Światło krawędziowe od dołu-lewej (efekt trójwymiarowego, wilgotnego ciała).
+  ctx.save();
+  capsule(ctx, hl - 1, hw - 1);
+  ctx.clip();
+  const rim = ctx.createLinearGradient(-hl, hw, hl * 0.2, -hw * 0.2);
+  rim.addColorStop(0, 'rgba(255,255,255,0.28)');
+  rim.addColorStop(0.35, 'rgba(255,255,255,0)');
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = 6;
+  ctx.filter = 'blur(2px)';
+  capsule(ctx, hl - 3, hw - 3);
+  ctx.stroke();
   ctx.restore();
 
   // Błona (podwójna: zewnętrzna ciemna + ściana komórkowa z jasną krawędzią).
@@ -602,27 +641,36 @@ function drawVirus(ctx: Ctx, w: number, h: number, p: VirusPalette): void {
   ctx.restore();
 
   // Białka wypustkowe.
-  const spikes = 18;
+  // Kolce w kształcie maczug (jak u koronawirusa): cienki trzon i zgrubiała, trójdzielna główka.
+  const spikes = 26;
   for (let i = 0; i < spikes; i++) {
-    const a = (i / spikes) * TAU + (rng.frac() - 0.5) * 0.15;
+    const a = (i / spikes) * TAU + (rng.frac() - 0.5) * 0.12;
     const c = Math.cos(a);
     const s = Math.sin(a);
+    const len = 32 + rng.frac() * 4;
     ctx.strokeStyle = p.stem;
-    ctx.lineWidth = 2.4;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(c * (rc - 2), s * (rc - 2));
-    ctx.lineTo(c * 34, s * 34);
+    ctx.lineTo(c * len, s * len);
     ctx.stroke();
-    const kx = c * 35.5;
-    const ky = s * 35.5;
-    const kg = ctx.createRadialGradient(kx - 1, ky - 1, 0.5, kx, ky, 4.4);
+    ctx.save();
+    ctx.translate(c * (len + 2.2), s * (len + 2.2));
+    ctx.rotate(a);
+    const kg = ctx.createRadialGradient(-1, -1.4, 0.5, 0, 0, 5);
     kg.addColorStop(0, p.knob[0]);
     kg.addColorStop(0.5, p.knob[1]);
     kg.addColorStop(1, p.knob[2]);
     ctx.fillStyle = kg;
     ctx.beginPath();
-    ctx.arc(kx, ky, 4.4, 0, TAU);
+    ctx.ellipse(0, 0, 4.4, 3.6, 0, 0, TAU);
     ctx.fill();
+    ctx.strokeStyle = p.stem;
+    ctx.lineWidth = 0.8;
+    ctx.globalAlpha = 0.6;
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Kapsyd.
@@ -640,12 +688,20 @@ function drawVirus(ctx: Ctx, w: number, h: number, p: VirusPalette): void {
   ctx.beginPath();
   ctx.arc(0, 0, rc, 0, TAU);
   ctx.clip();
-  ctx.fillStyle = p.dots;
-  for (let i = 0; i < 40; i++) {
+  // Wypukłości białek na powierzchni osłonki: ciemny cień + jasny refleks.
+  for (let i = 0; i < 90; i++) {
     const a = rng.frac() * TAU;
     const r = Math.sqrt(rng.frac()) * rc;
+    const bx = Math.cos(a) * r;
+    const by = Math.sin(a) * r;
+    const br = 1.3 + rng.frac() * 1.1;
+    ctx.fillStyle = p.dots;
     ctx.beginPath();
-    ctx.arc(Math.cos(a) * r, Math.sin(a) * r, 1.6 + rng.frac() * 0.8, 0, TAU);
+    ctx.arc(bx + 0.6, by + 0.7, br, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.arc(bx - 0.5, by - 0.6, br * 0.55, 0, TAU);
     ctx.fill();
   }
   // Fasetki kapsydu (ikosaedr): siatka trójkątów na powierzchni.
