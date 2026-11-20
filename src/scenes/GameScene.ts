@@ -787,6 +787,7 @@ export class GameScene extends Phaser.Scene {
     };
     const onMove = () => {
       this.pointerSeen = true;
+      if (settings.mouseFollow) this.control = 'mouse';
     };
     // Po pauzie / edytorze / utracie fokusu klawisze mogły zostać puszczone bez zdarzenia.
     const releaseAll = () => this.held.clear();
@@ -841,6 +842,10 @@ export class GameScene extends Phaser.Scene {
           const len = Math.hypot(dx, dy);
           p.tryMove((dx / len) * speed * dt, (dy / len) * speed * dt);
         }
+      } else if (this.control === 'mouse') {
+        const ptr = this.input.activePointer;
+        ptr.updateWorldPoint(this.cameras.main);
+        p.moveToward(ptr.worldX, ptr.worldY, speed, dt, p.radius * 0.6);
       }
       const mx = p.x - x0;
       const my = p.y - y0;
@@ -859,7 +864,7 @@ export class GameScene extends Phaser.Scene {
   /** Kierunek ataku: do kursora (mysz) albo w kierunku ostatniego ruchu (klawiatura). */
   private aimDirection(): Point {
     // Celowanie kursorem działa też przy sterowaniu klawiaturą (gdy mysz była użyta).
-    if (this.pointerSeen) {
+    if (this.control === 'mouse' || this.pointerSeen) {
       const ptr = this.input.activePointer;
       ptr.updateWorldPoint(this.cameras.main);
       const dx = ptr.worldX - this.player.x;
@@ -1276,7 +1281,7 @@ export class GameScene extends Phaser.Scene {
     this.order = order;
     const p = this.player;
     let point: Point;
-    if (this.pointerSeen) {
+    if (this.control === 'mouse' || this.pointerSeen) {
       const ptr = this.input.activePointer;
       ptr.updateWorldPoint(this.cameras.main);
       point = { x: ptr.worldX, y: ptr.worldY };

@@ -828,11 +828,11 @@ export class UIScene extends Phaser.Scene {
     const first = dirs.map((d) => keyName(settings.keys[d][0]));
     const firstText = first.every((n) => n.length === 1) ? first.join('') : first.join(' ');
     const arrows = dirs.every((d, i) => settings.keys[d][1] === ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'][i]);
-    const move = [firstText, arrows ? 'strzałki' : ''].filter(Boolean).join(' / ');
+    const move = [settings.mouseFollow ? 'Mysz' : '', firstText, arrows ? 'strzałki' : ''].filter(Boolean).join(' / ');
     return [
       virus
-        ? `${move} — ruch (mysz celuje)  ·  LPM/${k('ability')} — szarża  ·  dotknij komórki — zaraź  ·  ${k('convert')} — przerób komórkę  ·  ${k('pause')} — pauza`
-        : `${move} — ruch (mysz celuje)  ·  LPM/${k('ability')} — toksyny  ·  PPM/${k('divide')} — podział (${divideCost})  ·  ${k('convert')} — przerób komórkę  ·  ${k('pause')} — pauza`,
+        ? `${move} — ruch  ·  LPM/${k('ability')} — szarża  ·  dotknij komórki — zaraź  ·  ${k('convert')} — przerób komórkę  ·  ${k('pause')} — pauza`
+        : `${move} — ruch  ·  LPM/${k('ability')} — toksyny  ·  PPM/${k('divide')} — podział (${divideCost})  ·  ${k('convert')} — przerób komórkę  ·  ${k('pause')} — pauza`,
       `Rozkazy (miejsce = kursor):  ${k('orderFollow')} — za mną  ·  ${k('orderAttack')} — atak  ·  ${k('orderHold')} — pozycja  ·  ${k('orderForage')} — ${virus ? 'zarażaj' : 'zbieraj'}   ·   ${k('editor')} — edytor  ·  ${k('map')} — mapa  ·  ${k('sound')} — dźwięk`,
     ];
   }
