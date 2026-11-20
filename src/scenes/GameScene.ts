@@ -7,7 +7,9 @@ import {
   DASH,
   DESPAWN_RADIUS,
   ENEMY_DESPAWN_RADIUS,
+  DIFFICULTY,
   DNA,
+  PROGRESSION,
   STRUCTURES,
   FIRST_MISSION_AT,
   HOST_CELL_TARGET,
@@ -178,7 +180,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   get xpToNext(): number {
-    return 8 + this.level * 6;
+    return PROGRESSION.xpBase + this.level * PROGRESSION.xpPerLevel;
   }
 
   get missionInfo(): MissionInfo | undefined {
@@ -337,7 +339,7 @@ export class GameScene extends Phaser.Scene {
     this.pendingLevelUps--;
     this.recomputeStats();
     // Mała nagroda za awans: leczenie 20%.
-    this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * 0.2);
+    this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * PROGRESSION.levelUpHeal);
     this.offerOpen = false;
   }
 
@@ -1062,13 +1064,14 @@ export class GameScene extends Phaser.Scene {
 
   private updateSpawning(dt: number): void {
     const t = this.threat;
-    const maxAlive = Math.min(60, 6 + Math.floor(t * 3));
+    const D = DIFFICULTY;
+    const maxAlive = Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(t * D.maxAlivePerThreat));
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0 || this.enemies.length >= maxAlive) return;
 
     const p = this.openPoint(this.player, 950, 1200, 30);
     if (!p) return; // spróbujemy w następnej klatce
-    this.spawnTimer = Math.max(0.35, 2.4 - t * 0.12);
+    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat);
 
     // Rodzaj wroga zależy od biomu, w którym jest gracz.
     const biome = BIOMES[biomeAt(p.x, p.y).a];
@@ -1485,10 +1488,10 @@ export class GameScene extends Phaser.Scene {
       this.missionsDone++;
       this.dna += DNA.perMission;
       this.game.events.emit(GameEvents.Toast, `+${DNA.perMission} DNA za zadanie — V: edytor komórki`);
-      this.gainXp(Math.round(25 + 5 * this.threat));
+      this.gainXp(Math.round(PROGRESSION.missionXpBase + PROGRESSION.missionXpPerThreat * this.threat));
       if (m.type === 'defend') {
-        this.biomass += 20;
-        this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * 0.3);
+        this.biomass += PROGRESSION.missionBiomass;
+        this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * PROGRESSION.missionHeal);
         this.burst(o.x, o.y, COLORS.burstOrgan, 16);
       } else {
         o.setTint(COLORS.infectedOrgan);
@@ -1514,9 +1517,10 @@ export class GameScene extends Phaser.Scene {
       this.xp -= this.xpToNext;
       this.level++;
       this.pendingLevelUps++;
-      const gained = DNA.perLevel + (this.level % DNA.bonusEvery === 0 ? DNA.bonus : 0);
-      this.dna += gained;
-      this.game.events.emit(GameEvents.Toast, `+${gained} DNA — V: zbuduj komórkę`);
+      if (this.level % DNA.everyLevels === 0) {
+        this.dna += 1;
+        this.game.events.emit(GameEvents.Toast, '+1 DNA — V: zbuduj komórkę');
+      }
       this.updatePlayerRadius();
     }
   }

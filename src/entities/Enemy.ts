@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COLORS } from '../config';
+import { COLORS, DIFFICULTY } from '../config';
 import { TEX, TEX_RADIUS } from '../graphics/textures';
 import { Cell } from './Cell';
 import type { Organ } from './Organ';
@@ -125,11 +125,11 @@ export class Enemy extends Cell {
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, threat: number) {
     const d = ENEMY_DEFS[kind];
     const t = Math.max(0, threat - 1);
-    super(scene, x, y, d.radius, d.texture, d.texRadius, Math.round(d.hp * (1 + 0.12 * t)));
+    super(scene, x, y, d.radius, d.texture, d.texRadius, Math.round(d.hp * (1 + DIFFICULTY.hpPerThreat * t)));
     this.kind = kind;
     this.def = d;
-    this.speed = d.speed * (1 + 0.015 * t);
-    this.dps = d.dps * (1 + 0.05 * t);
+    this.speed = d.speed * (1 + DIFFICULTY.speedPerThreat * t);
+    this.dps = d.dps * (1 + DIFFICULTY.dpsPerThreat * t);
     this.xp = d.xp;
     this.biomass = d.biomass;
     this.burstColor = d.burstColor;

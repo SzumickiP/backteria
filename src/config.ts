@@ -8,13 +8,13 @@ export const DESPAWN_RADIUS = 1800;
 /** Wrogowie dalej niż to od gracza (i niezwiązani z zadaniem) są usuwani. */
 export const ENEMY_DESPAWN_RADIUS = 2300;
 
-export const NUTRIENT_TARGET = 130;
+export const NUTRIENT_TARGET = 100;
 export const HOST_CELL_TARGET = 32;
 export const PREY_BACTERIA_TARGET = 14;
 export const RBC_TARGET = 26;
 
 /** Co ile sekund zagrożenie rośnie o 1. */
-export const THREAT_PERIOD = 30;
+export const THREAT_PERIOD = 22;
 export const FIRST_MISSION_AT = 20;
 export const MISSION_COOLDOWN = 40;
 
@@ -30,16 +30,45 @@ export const PROTEIN = {
 } as const;
 
 /** Przerabianie komórek ciała na budowle (klawisz E). */
-export const CONVERT = { cooldown: 25, range: 90, maxStructures: 3, hp: 150, radius: 28 } as const;
+export const CONVERT = { cooldown: 40, range: 90, maxStructures: 2, hp: 100, radius: 28 } as const;
 
 export const STRUCTURES = {
-  turret: { name: 'Wieżyczka', description: 'Strzela białkami we wrogów w pobliżu', tint: 0x9be8c8, interval: 0.8, range: 380, damage: 14 },
-  factory: { name: 'Fabryka', description: 'Co 8 s tworzy nową komórkę kolonii', tint: 0xfde68a, interval: 8 },
-  nest: { name: 'Gniazdo', description: 'Leczy Ciebie i kolonię w pobliżu', tint: 0xf0abfc, range: 170, heal: 6 },
+  turret: { name: 'Wieżyczka', description: 'Strzela białkami we wrogów w pobliżu', tint: 0x9be8c8, interval: 1.1, range: 340, damage: 9 },
+  factory: { name: 'Fabryka', description: 'Co 14 s tworzy nową komórkę kolonii', tint: 0xfde68a, interval: 14 },
+  nest: { name: 'Gniazdo', description: 'Leczy Ciebie i kolonię w pobliżu', tint: 0xf0abfc, range: 150, heal: 3 },
 } as const;
 
-/** Punkty DNA na budowę komórki (edytor, klawisz V). */
-export const DNA = { perLevel: 1, bonusEvery: 5, bonus: 1, perMission: 2 } as const;
+/** Punkty DNA na budowę komórki (edytor, klawisz V): 1 punkt co `everyLevels` poziomów + za zadania. */
+export const DNA = { everyLevels: 2, perMission: 1 } as const;
+
+/** Rozwój gracza: krzywa doświadczenia i nagrody. */
+export const PROGRESSION = {
+  xpBase: 10,
+  xpPerLevel: 8,
+  /** leczenie przy wyborze mutacji (ułamek maks. zdrowia) */
+  levelUpHeal: 0.1,
+  missionXpBase: 15,
+  missionXpPerThreat: 4,
+  /** leczenie za obronę narządu */
+  missionHeal: 0.15,
+  missionBiomass: 12,
+} as const;
+
+/** Trudność: tempo i siła wrogów. */
+export const DIFFICULTY = {
+  /** maks. wrogów naraz: base + perThreat × zagrożenie (do cap) */
+  maxAliveBase: 8,
+  maxAlivePerThreat: 4,
+  maxAliveCap: 70,
+  /** odstęp między pojawieniami (s): max(min, start - perThreat × zagrożenie) */
+  spawnStart: 1.8,
+  spawnPerThreat: 0.12,
+  spawnMin: 0.3,
+  /** wzrost statystyk wroga na poziom zagrożenia */
+  hpPerThreat: 0.18,
+  dpsPerThreat: 0.08,
+  speedPerThreat: 0.02,
+} as const;
 
 /** Atak specjalny bakterii: salwa toksyn. */
 export const TOXIN = { speed: 540, life: 0.85, spread: 0.16 } as const;

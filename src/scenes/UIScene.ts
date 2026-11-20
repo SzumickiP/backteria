@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { recordResult } from '../account/accounts';
-import { STRUCTURES } from '../config';
+import { CONVERT, STRUCTURES } from '../config';
 import type { StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
 import type { Mutation } from '../mutations';
@@ -122,7 +122,7 @@ export class UIScene extends Phaser.Scene {
     const lines = [`${g.species.name} · poziom ${g.level} · DNA ${g.dna}${g.dna > 0 ? ' (V — buduj)' : ''}`];
     if (!g.isVirus) lines.push(`Biomasa ${Math.floor(g.biomass)}`);
     lines.push(`${g.species.colonyLabel} ${g.allies.length}/${g.stats.maxColony} · rozkaz: ${ORDER_NAMES[g.order]}`);
-    lines.push(`Budowle ${g.structures.length}/3 · przeróbka (E): ${g.convertCd > 0 ? `${Math.ceil(g.convertCd)} s` : 'gotowa'}`);
+    lines.push(`Budowle ${g.structures.length}/${CONVERT.maxStructures} · przeróbka (E): ${g.convertCd > 0 ? `${Math.ceil(g.convertCd)} s` : 'gotowa'}`);
     lines.push(`${g.species.abilityName} (LPM/F): ${g.abilityCd > 0 ? `${g.abilityCd.toFixed(1)} s` : 'gotowe'}`);
     this.statsText.setText(lines);
 
