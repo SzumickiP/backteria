@@ -6,17 +6,12 @@ import { listAccounts, login, NICK_RULES, register, type Account } from './accou
  * z liczbą osiągnięć — kliknięcie gracza loguje go (bez hasła).
  * Wywołuje `onDone` po wyborze / utworzeniu konta.
  */
-export function showAccountScreen(onDone: (acc: Account, multiplayer: boolean) => void): void {
+export function showAccountScreen(onDone: (acc: Account) => void): void {
   const root = document.createElement('div');
   root.id = 'account';
   root.innerHTML = `
     <form class="acc-card" novalidate>
       <h1>Backteria</h1>
-      <div class="acc-tabs" role="tablist">
-        <button type="button" data-multi="0" class="active">Jedna osoba</button>
-        <button type="button" data-multi="1">Wiele osób</button>
-      </div>
-      <p class="acc-hint acc-mode-hint"></p>
       <label>Nowy gracz
         <input name="nick" autocomplete="off" maxlength="16" placeholder="Wpisz nazwę gracza" />
       </label>
@@ -37,26 +32,13 @@ export function showAccountScreen(onDone: (acc: Account, multiplayer: boolean) =
   const list = form.querySelector<HTMLElement>('.acc-list')!;
   const listWrap = form.querySelector<HTMLElement>('.acc-list-wrap')!;
 
-  let multi = false;
-  const modeHint = form.querySelector<HTMLElement>('.acc-mode-hint')!;
-  const tabs = form.querySelectorAll<HTMLButtonElement>('.acc-tabs button');
-  const setMode = (m: boolean) => {
-    multi = m;
-    tabs.forEach((t) => t.classList.toggle('active', (t.dataset.multi === '1') === m));
-    modeHint.textContent = m
-      ? 'Gra kooperacyjna przez internet: po zalogowaniu utworzysz grę albo dołączysz do cudzej.'
-      : 'Klasyczna rozgrywka dla jednego gracza.';
-  };
-  tabs.forEach((t) => t.addEventListener('click', () => setMode(t.dataset.multi === '1')));
-  setMode(false);
-
   const finish = (result: Account | string) => {
     if (typeof result === 'string') {
       error.textContent = result;
       return;
     }
     root.remove();
-    onDone(result, multi);
+    onDone(result);
   };
 
   const accounts = listAccounts();
