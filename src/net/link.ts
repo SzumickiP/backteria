@@ -1,7 +1,4 @@
-/**
- * Połączenie P2P (WebRTC DataChannel) bez własnego serwera: gracze wymieniają się krótkimi kodami
- * (ofertą i odpowiedzią), np. przez komunikator. Gospodarz liczy całą grę, goście wysyłają sterowanie.
- */
+import Peer, { type DataConnection } from 'peerjs';
 
 export type NetMode = 'single' | 'host' | 'guest';
 
@@ -30,26 +27,20 @@ export type ToGuest =
     }
   | { t: 'over'; text: string };
 
-const ICE: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-const enc = (d: RTCSessionDescriptionInit): string => btoa(JSON.stringify({ t: d.type, s: d.sdp }));
-const dec = (code: string): RTCSessionDescriptionInit => {
-  const o = JSON.parse(atob(code.replace(/\s+/g, ''))) as { t: RTCSdpType; s: string };
-  return { type: o.t, sdp: o.s };
-};
+/**
+ * Połączenie P2P (WebRTC przez PeerJS): gospodarz dostaje krótki kod pokoju, a gość wpisuje go
+ * (albo klika link). Publiczny broker PeerJS służy tylko do nawiązania połączenia — dane gry
+ * płyną bezpośrednio między graczami. Gospodarz liczy grę, goście wysyłają sterowanie.
+ */
 
-/** Czeka, aż zbiorą się kandydaci ICE (kod ma zawierać wszystko — bez serwera sygnalizacyjnego). */
-function gathered(pc: RTCPeerConnection): Promise<void> {
-  return new Promise((resolve) => {
-    if (pc.iceGatheringState === 'complete') return resolve();
-    const done = () => {
-      pc.removeEventListener('icegatheringstatechange', check);
-      resolve();
-    };
-    const check = () => pc.iceGatheringState === 'complete' && done();
-    pc.addEventListener('icegatheringstatechange', check);
-    setTimeout(done, 5000);
-  });
+const PREFIX = 'backteria-';
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+export function randomRoomCode(): string {
+  let c = '';
+  for (let i = 0; i < 5; i++) c += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+  return c;
 }
 
 export class NetLink {
@@ -58,74 +49,94 @@ export class NetLink {
   closed = false;
   onMessage: (msg: ToHost | ToGuest) => void = () => {};
   onChange: () => void = () => {};
-  private pc = new RTCPeerConnection(ICE);
-  private ch?: RTCDataChannel;
 
-  private attach(ch: RTCDataChannel): void {
-    this.ch = ch;
-    ch.onopen = () => {
+  constructor(private readonly conn: DataConnection) {
+    const up = () => {
       this.open = true;
       this.onChange();
     };
-    ch.onclose = () => {
+    if (conn.open) up();
+    else conn.on('open', up);
+    const down = () => {
       this.open = false;
       this.closed = true;
       this.onChange();
     };
-    ch.onmessage = (e) => {
-      try {
-        this.onMessage(JSON.parse(e.data as string));
-      } catch {
-        /* uszkodzona wiadomość — pomijamy */
-      }
-    };
-    this.pc.onconnectionstatechange = () => {
-      if (this.pc.connectionState === 'failed' || this.pc.connectionState === 'disconnected') {
-        this.open = false;
-        this.closed = true;
-        this.onChange();
-      }
-    };
-  }
-
-  /** Gospodarz: tworzy kod oferty dla jednego gościa. */
-  async createOffer(): Promise<string> {
-    this.attach(this.pc.createDataChannel('game', { ordered: false, maxRetransmits: 0 }));
-    await this.pc.setLocalDescription(await this.pc.createOffer());
-    await gathered(this.pc);
-    return enc(this.pc.localDescription!);
-  }
-
-  /** Gospodarz: przyjmuje kod odpowiedzi od gościa. */
-  async acceptAnswer(code: string): Promise<void> {
-    await this.pc.setRemoteDescription(dec(code));
-  }
-
-  /** Gość: przyjmuje kod oferty i zwraca kod odpowiedzi. */
-  async joinOffer(code: string): Promise<string> {
-    this.pc.ondatachannel = (e) => this.attach(e.channel);
-    await this.pc.setRemoteDescription(dec(code));
-    await this.pc.setLocalDescription(await this.pc.createAnswer());
-    await gathered(this.pc);
-    return enc(this.pc.localDescription!);
+    conn.on('close', down);
+    conn.on('error', down);
+    conn.on('data', (d) => this.onMessage(d as ToHost | ToGuest));
   }
 
   send(msg: ToHost | ToGuest): void {
-    if (this.ch?.readyState === 'open') this.ch.send(JSON.stringify(msg));
+    if (this.open) this.conn.send(msg);
   }
 
   close(): void {
     this.closed = true;
-    this.ch?.close();
-    this.pc.close();
+    this.open = false;
+    this.conn.close();
   }
 }
 
 /** Aktualne połączenia tej sesji (gospodarz: po jednym na gościa; gość: jedno — do gospodarza). */
-export const net: { mode: NetMode; links: NetLink[] } = { mode: 'single', links: [] };
+export const net: { mode: NetMode; links: NetLink[]; peer?: Peer } = { mode: 'single', links: [] };
 
 export function resetNet(): void {
   for (const l of net.links) l.close();
   net.links = [];
+  net.peer?.destroy();
+  net.peer = undefined;
   net.mode = 'single';
+}
+
+/** Gospodarz: otwiera pokój i wywołuje onGuest dla każdego dołączającego gościa. Zwraca kod pokoju. */
+export function hostRoom(onGuest: (link: NetLink) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const tryOpen = (attempt: number) => {
+      const code = randomRoomCode();
+      const peer = new Peer(PREFIX + code);
+      peer.on('open', () => {
+        net.peer = peer;
+        peer.on('connection', (conn) => {
+          const link = new NetLink(conn);
+          net.links.push(link);
+          onGuest(link);
+        });
+        resolve(code);
+      });
+      peer.on('error', (e) => {
+        peer.destroy();
+        if ((e as { type?: string }).type === 'unavailable-id' && attempt < 5) tryOpen(attempt + 1);
+        else if (!net.peer) reject(new Error('Nie można połączyć z serwerem pokoi.'));
+      });
+    };
+    tryOpen(0);
+  });
+}
+
+/** Gość: dołącza do pokoju o podanym kodzie. */
+export function joinRoom(code: string): Promise<NetLink> {
+  return new Promise((resolve, reject) => {
+    const peer = new Peer();
+    net.peer = peer;
+    const fail = (msg: string) => {
+      peer.destroy();
+      if (net.peer === peer) net.peer = undefined;
+      reject(new Error(msg));
+    };
+    const timer = setTimeout(() => fail('Nie udało się połączyć z gospodarzem (czas minął).'), 15000);
+    peer.on('error', (e) =>
+      fail((e as { type?: string }).type === 'peer-unavailable' ? 'Nie ma pokoju o takim kodzie.' : 'Błąd połączenia z serwerem pokoi.'),
+    );
+    peer.on('open', () => {
+      const link = new NetLink(peer.connect(PREFIX + code.trim().toUpperCase(), { serialization: 'json' }));
+      const check = () => {
+        if (!link.open) return;
+        clearTimeout(timer);
+        resolve(link);
+      };
+      link.onChange = check;
+      check();
+    });
+  });
 }

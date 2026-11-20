@@ -1,10 +1,32 @@
-import { NetLink, net, resetNet, type NetMode } from './link';
+import { hostRoom, joinRoom, net, resetNet, type NetLink, type NetMode } from './link';
+
+/** Link dla gościa: ta sama strona z kodem pokoju w adresie. */
+export function inviteLink(code: string): string {
+  return `${location.origin}${location.pathname}?join=${code}`;
+}
+
+/** Kod pokoju z adresu (?join=KOD) — zużywa go, żeby odświeżenie strony nie dołączało ponownie. */
+export function takeJoinCode(): string | undefined {
+  const code = new URLSearchParams(location.search).get('join')?.trim().toUpperCase();
+  if (!code) return undefined;
+  try {
+    history.replaceState(null, '', location.pathname);
+  } catch {
+    /* np. file:// — nieistotne */
+  }
+  return code;
+}
 
 /**
- * Ekran łączenia graczy (HTML nad grą). Bez serwera: gospodarz wysyła gościowi kod oferty,
- * gość odsyła kod odpowiedzi. Po połączeniu gospodarz startuje grę, a gość czeka na planszę.
+ * Ekran łączenia graczy (HTML nad grą). Gospodarz dostaje kod pokoju i link; gość wpisuje kod
+ * albo wchodzi z linku. Po połączeniu gospodarz startuje grę, a gość czeka na planszę.
  */
-export function showLobby(nick: string, onStart: (mode: Exclude<NetMode, 'single'>) => void, onBack: () => void): void {
+export function showLobby(
+  nick: string,
+  onStart: (mode: Exclude<NetMode, 'single'>) => void,
+  onBack: () => void,
+  joinCode?: string,
+): void {
   resetNet();
   const root = document.createElement('div');
   root.id = 'account';
@@ -16,9 +38,8 @@ export function showLobby(nick: string, onStart: (mode: Exclude<NetMode, 'single
   const close = () => root.remove();
   const html = (s: string) => (card.innerHTML = `<h1>Backteria</h1>${s}`);
   const q = <T extends HTMLElement>(sel: string) => card.querySelector<T>(sel)!;
-  const copy = (ta: HTMLTextAreaElement, btn: HTMLButtonElement) => {
-    ta.select();
-    void navigator.clipboard?.writeText(ta.value).then(() => (btn.textContent = 'Skopiowano ✓'));
+  const copy = (text: string, btn: HTMLElement) => {
+    void navigator.clipboard?.writeText(text).then(() => (btn.textContent = 'Skopiowano ✓'));
   };
 
   const home = () => {
@@ -26,11 +47,15 @@ export function showLobby(nick: string, onStart: (mode: Exclude<NetMode, 'single
     html(`
       <p class="acc-title">Gra wieloosobowa jako ${nick}</p>
       <button class="acc-submit" data-a="host">Utwórz grę (gospodarz)</button>
+      <label>Kod pokoju
+        <input class="acc-code" maxlength="8" autocomplete="off" placeholder="np. K7TQ2" />
+      </label>
       <button class="acc-submit" data-a="join">Dołącz do gry</button>
+      <p class="acc-error" role="alert"></p>
       <button class="acc-second" data-a="back">← Wróć</button>
-      <p class="acc-note">Gracze łączą się bezpośrednio (P2P) przez wymianę kodów — bez serwera. Gra liczy się na komputerze gospodarza.</p>`);
+      <p class="acc-note">Gracze łączą się bezpośrednio (P2P). Gra liczy się na komputerze gospodarza.</p>`);
     q('[data-a=host]').addEventListener('click', host);
-    q('[data-a=join]').addEventListener('click', join);
+    q('[data-a=join]').addEventListener('click', () => join(q<HTMLInputElement>('.acc-code').value));
     q('[data-a=back]').addEventListener('click', () => {
       close();
       onBack();
@@ -38,123 +63,74 @@ export function showLobby(nick: string, onStart: (mode: Exclude<NetMode, 'single
   };
 
   // ───────── gospodarz ─────────
-  const host = () => {
+  const host = async () => {
     net.mode = 'host';
     html(`
-      <p class="acc-title">Gospodarz — dodaj graczy</p>
-      <div class="acc-list-wrap">
-        <p class="acc-step">Połączeni: <span class="acc-who">nikt</span></p>
-      </div>
-      <p class="acc-step">1. Wyślij gościowi ten kod:</p>
-      <textarea class="acc-offer" readonly placeholder="Generuję kod…"></textarea>
-      <button class="acc-second acc-copy">Kopiuj kod</button>
-      <p class="acc-step">2. Wklej kod odpowiedzi od gościa:</p>
-      <textarea class="acc-answer" placeholder="Kod odpowiedzi"></textarea>
-      <button class="acc-second acc-connect">Połącz gościa</button>
+      <p class="acc-title">Gospodarz — czekam na graczy</p>
+      <p class="acc-step">Kod pokoju:</p>
+      <p class="acc-room" style="font:700 34px monospace;letter-spacing:6px;margin:0;text-align:center">…</p>
+      <button class="acc-second acc-copy-link" disabled>Kopiuj link do gry</button>
+      <p class="acc-step">Połączeni: <span class="acc-who">nikt</span></p>
       <p class="acc-error" role="alert"></p>
       <button class="acc-submit acc-go" disabled>Rozpocznij grę</button>
       <button class="acc-second acc-back">← Wróć</button>`);
-    const offer = q<HTMLTextAreaElement>('.acc-offer');
-    const answer = q<HTMLTextAreaElement>('.acc-answer');
-    const err = q('.acc-error');
-    const go = q<HTMLButtonElement>('.acc-go');
     const who = q('.acc-who');
-    let pending: NetLink | undefined;
-
+    const go = q<HTMLButtonElement>('.acc-go');
     const refresh = () => {
       const ok = net.links.filter((l) => l.open);
       who.textContent = ok.length ? ok.map((l) => l.nick || 'gracz').join(', ') : 'nikt';
       go.disabled = ok.length === 0;
     };
-    const newOffer = async () => {
-      offer.value = '';
-      answer.value = '';
-      pending = new NetLink();
-      const link = pending;
-      link.onChange = refresh;
-      link.onMessage = (m) => {
-        if (m.t === 'hello') {
-          link.nick = m.nick;
-          refresh();
-        }
-      };
-      try {
-        offer.value = await link.createOffer();
-      } catch {
-        err.textContent = 'Nie udało się utworzyć kodu (przeglądarka nie obsługuje WebRTC?).';
-      }
-    };
-    q('.acc-copy').addEventListener('click', () => copy(offer, q<HTMLButtonElement>('.acc-copy')));
-    q('.acc-connect').addEventListener('click', async () => {
-      err.textContent = '';
-      if (!pending || !answer.value.trim()) return;
-      try {
-        await pending.acceptAnswer(answer.value);
-        net.links.push(pending);
-        q<HTMLButtonElement>('.acc-copy').textContent = 'Kopiuj kod';
-        await newOffer(); // gotowy kod dla kolejnego gościa
-      } catch {
-        err.textContent = 'Kod odpowiedzi jest nieprawidłowy.';
-      }
-    });
+    q('.acc-back').addEventListener('click', home);
     go.addEventListener('click', () => {
       net.links = net.links.filter((l) => l.open);
-      pending?.close();
       close();
       onStart('host');
     });
-    q('.acc-back').addEventListener('click', () => {
-      pending?.close();
-      home();
-    });
-    void newOffer();
+    try {
+      const code = await hostRoom((link: NetLink) => {
+        link.onChange = refresh;
+        link.onMessage = (m) => {
+          if (m.t === 'hello') {
+            link.nick = m.nick;
+            refresh();
+          }
+        };
+        refresh();
+      });
+      q('.acc-room').textContent = code;
+      const btn = q<HTMLButtonElement>('.acc-copy-link');
+      btn.disabled = false;
+      btn.addEventListener('click', () => copy(inviteLink(code), btn));
+    } catch (e) {
+      q('.acc-error').textContent = (e as Error).message;
+    }
   };
 
   // ───────── gość ─────────
-  const join = () => {
+  const join = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) {
+      q('.acc-error').textContent = 'Wpisz kod pokoju.';
+      return;
+    }
     net.mode = 'guest';
     html(`
-      <p class="acc-title">Dołączanie do gry</p>
-      <p class="acc-step">1. Wklej kod od gospodarza:</p>
-      <textarea class="acc-offer" placeholder="Kod od gospodarza"></textarea>
-      <button class="acc-second acc-make">Utwórz kod odpowiedzi</button>
-      <p class="acc-step">2. Odeślij gospodarzowi ten kod:</p>
-      <textarea class="acc-answer" readonly></textarea>
-      <button class="acc-second acc-copy">Kopiuj kod</button>
+      <p class="acc-title">Dołączam do pokoju ${code}…</p>
       <p class="acc-error" role="alert"></p>
       <button class="acc-second acc-back">← Wróć</button>`);
-    const offer = q<HTMLTextAreaElement>('.acc-offer');
-    const answer = q<HTMLTextAreaElement>('.acc-answer');
-    const err = q('.acc-error');
-    let link: NetLink | undefined;
-
-    q('.acc-copy').addEventListener('click', () => copy(answer, q<HTMLButtonElement>('.acc-copy')));
-    q('.acc-make').addEventListener('click', async () => {
-      err.textContent = '';
-      if (!offer.value.trim()) return;
-      link?.close();
-      link = new NetLink();
-      const l = link;
-      l.onChange = () => {
-        if (!l.open) return;
-        // Połączono — od tej chwili gość czeka w grze na planszę od gospodarza.
-        l.send({ t: 'hello', nick });
-        net.links = [l];
-        close();
-        onStart('guest');
-      };
-      try {
-        answer.value = await l.joinOffer(offer.value);
-        err.textContent = 'Czekam na połączenie — gospodarz musi wkleić Twój kod.';
-      } catch {
-        err.textContent = 'Kod gospodarza jest nieprawidłowy.';
-      }
-    });
-    q('.acc-back').addEventListener('click', () => {
-      link?.close();
-      home();
-    });
+    q('.acc-back').addEventListener('click', home);
+    try {
+      const link = await joinRoom(code);
+      link.send({ t: 'hello', nick });
+      net.links = [link];
+      close();
+      onStart('guest'); // gość czeka w grze na planszę od gospodarza
+    } catch (e) {
+      q('.acc-error').textContent = (e as Error).message;
+    }
   };
 
   home();
+  if (joinCode) void join(joinCode);
 }

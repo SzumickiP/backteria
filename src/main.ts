@@ -4,7 +4,7 @@ import { logout, restoreSession, type Account } from './account/accounts';
 import { audio } from './audio/AudioEngine';
 import { GameEvents } from './events';
 import { EditorScene } from './scenes/EditorScene';
-import { showLobby } from './net/LobbyScreen';
+import { showLobby, takeJoinCode } from './net/LobbyScreen';
 import { resetNet, type NetMode } from './net/link';
 import { GuestScene } from './scenes/GuestScene';
 import { GameScene } from './scenes/GameScene';
@@ -52,12 +52,18 @@ function startGame(acc: Account, mode: NetMode = 'single'): void {
 }
 
 /** Po zalogowaniu: gra jednoosobowa startuje od razu, wieloosobowa przechodzi przez lobby. */
+/** Kod pokoju z linku zaproszenia (?join=KOD) — użyty przy pierwszym wejściu do lobby. */
+let inviteCode = takeJoinCode();
+
 function chooseMode(acc: Account, multiplayer: boolean): void {
-  if (!multiplayer) return startGame(acc, 'single');
+  const code = inviteCode;
+  inviteCode = undefined;
+  if (!multiplayer && !code) return startGame(acc, 'single');
   showLobby(
     acc.nick,
     (mode) => startGame(acc, mode),
     () => showAccountScreen(chooseMode),
+    code,
   );
 }
 
@@ -66,5 +72,5 @@ for (const ev of ['pointerdown', 'keydown'] as const) window.addEventListener(ev
 
 // Najpierw konto: zapamiętana sesja albo ekran logowania / rejestracji.
 const session = restoreSession();
-if (session) startGame(session, 'single');
+if (session) chooseMode(session, false);
 else showAccountScreen(chooseMode);
