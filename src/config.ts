@@ -41,6 +41,18 @@ export const STRUCTURES = {
 /** Punkty DNA na budowę komórki (edytor, klawisz V): 1 punkt co `everyLevels` poziomów + za zadania. */
 export const DNA = { everyLevels: 2, perMission: 1 } as const;
 
+/** Maskowanie: przez chwilę wrogowie nie widzą gracza. */
+export const CLOAK = { duration: 4, cooldown: 18 } as const;
+
+/** Strefa zarażona (losowy start): promień i ułatwienia. */
+export const START_ZONE = {
+  radius: 1500,
+  /** ile razy rzadziej pojawiają się wrogowie, gdy gracz jest w strefie */
+  spawnSlowdown: 3,
+  /** ile razy więcej pożywienia / komórek w strefie */
+  bounty: 1.5,
+} as const;
+
 /** Wrogowie odpuszczają pościg i nadmiar wrogów jest usuwany. */
 export const GIVE_UP = {
   /** po ilu sekundach pościgu bez dosięgnięcia ofiary wróg odpuszcza */

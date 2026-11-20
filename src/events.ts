@@ -17,9 +17,15 @@ export const GameEvents = {
   Logout: 'bt-logout',
   /** zdobyto osiągnięcie (argument: AchievementDef) */
   Achievement: 'bt-achievement',
+  /** wirus podbił narząd (nazwa, ile podbitych, ile wszystkich) */
+  Conquest: 'bt-conquest',
+  /** wygrana: wirus podbił cały organizm (argument: GameSummary) */
+  Victory: 'bt-victory',
+  /** pojawiła się / dołączyła przyjazna postać (komunikat) */
+  Friend: 'bt-friend',
 } as const;
 
-export type MissionType = 'defend' | 'infect';
+export type MissionType = 'defend' | 'infect' | 'nest' | 'collect' | 'outbreak';
 
 export interface GameSummary {
   species: SpeciesId;

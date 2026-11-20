@@ -24,6 +24,9 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'commander', name: 'Dowódca', description: 'Wydaj kolonii wszystkie 4 rodzaje rozkazów' },
   { id: 'giant-slayer', name: 'Pogromca olbrzymów', description: 'Pokonaj prątka albo makrofaga' },
   { id: 'both-sides', name: 'Dwie strony', description: 'Zagraj i bakterią, i wirusem' },
+  { id: 'conqueror', name: 'Podbój', description: 'Jako wirus podbij cały organizm' },
+  { id: 'friendship', name: 'Przyjaźń', description: 'Spotkaj przyjazną postać' },
+  { id: 'nest-buster', name: 'Burzyciel gniazd', description: 'Zniszcz ognisko infekcji lub węzeł chłonny' },
 ];
 
 export function hasAchievement(nick: string, id: string): boolean {

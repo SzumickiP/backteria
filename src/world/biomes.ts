@@ -1,6 +1,6 @@
 import type { EnemyKind } from '../entities/Enemy';
 
-export type BiomeId = 'tissue' | 'vessel' | 'lung' | 'gut' | 'brain';
+export type BiomeId = 'tissue' | 'vessel' | 'lung' | 'gut' | 'brain' | 'infected';
 export type RGB = [number, number, number];
 
 export interface BiomeDef {
@@ -69,6 +69,19 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     minimap: [176, 112, 60],
     enemies: { toxigen: 2.5, bacillus: 2, germ: 2, virus: 1 },
     immune: { antibody: 3, leukocyte: 1.5 },
+  },
+  infected: {
+    id: 'infected',
+    name: 'Strefa zarażona',
+    wallDeep: [92, 84, 28],
+    wallMid: [168, 156, 64],
+    rim: [222, 214, 120],
+    floor: [90, 110, 20],
+    floorAlpha: 0.22,
+    minimap: [176, 166, 70],
+    // Łatwy start: tylko słabi wrogowie (i tak rzadko, bo w strefie się nie pojawiają).
+    enemies: { virus: 1 },
+    immune: { antibody: 1 },
   },
   brain: {
     id: 'brain',

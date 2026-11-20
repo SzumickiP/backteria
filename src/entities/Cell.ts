@@ -19,6 +19,8 @@ export class Cell extends Phaser.GameObjects.Image {
   baseTint?: number;
   /** mnożnik otrzymywanych obrażeń (np. woskowy pancerz prątka = 0.5) */
   armorMul = 1;
+  /** mnożnik zadawanych obrażeń (np. przyjazny sojusznik jest silniejszy od zwykłej kolonii) */
+  damageMul = 1;
   /** prędkość z poprzedniej klatki (px/s) — do zachowań stadnych */
   vx = 0;
   vy = 0;

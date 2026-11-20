@@ -200,14 +200,68 @@ export const ANIMAL_ORDER: AnimalId[] = ['mouse', 'fish', 'bird'];
 let current: AnimalDef = MOUSE;
 let allBody: Shape[] = MOUSE.parts.flatMap((p) => p.shapes);
 
+/** Strefa zarażona — losowe miejsce startu, w którym łatwiej zacząć. */
+export interface StartZone {
+  x: number;
+  y: number;
+  r: number;
+}
+let zone: StartZone | undefined;
+
+export const ZONE_NAME = 'Strefa zarażona';
+
 /** Ustawia zwierzę, w którym toczy się gra (przed startem sceny gry). */
 export function setAnimal(id: AnimalId): void {
   current = ANIMALS[id];
   allBody = current.parts.flatMap((p) => p.shapes);
+  zone = undefined;
 }
 
 export function currentAnimal(): AnimalDef {
   return current;
+}
+
+export function setStartZone(z: StartZone | undefined): void {
+  zone = z;
+}
+
+export function startZone(): StartZone | undefined {
+  return zone;
+}
+
+/** Czy punkt jest w strefie zarażonej. */
+export function inStartZone(x: number, y: number): boolean {
+  return !!zone && Math.hypot(x - zone.x, y - zone.y) < zone.r;
+}
+
+/**
+ * Losuje środek strefy startowej: w tkance (nie w narządzie), z zapasem od skóry.
+ * `rand` — źródło losowości (0–1).
+ */
+export function pickStartZone(rand: () => number, r = 1500): StartZone {
+  const b = current.bounds;
+  for (let i = 0; i < 3000; i++) {
+    const x = b.minX + rand() * (b.maxX - b.minX);
+    const y = b.minY + rand() * (b.maxY - b.minY);
+    if (bodyDist(x, y) > -Math.min(r, 1600)) continue; // za blisko skóry / poza ciałem
+    if (current.organs.some((o) => shapesDist(o.shapes, x, y) < 300)) continue; // nie w narządzie
+    return { x, y, r };
+  }
+  return { x: current.start.x, y: current.start.y, r };
+}
+
+/** Część ciała (głowa, tułów, łapa, ogon…) — niezależnie od narządów. */
+export function partAt(x: number, y: number): string {
+  let name = 'Skóra';
+  let best = 0;
+  for (const p of current.parts) {
+    const d = shapesDist(p.shapes, x, y);
+    if (d < best) {
+      best = d;
+      name = p.name;
+    }
+  }
+  return name;
 }
 
 // ───────────────────────── odległości ─────────────────────────
@@ -263,6 +317,11 @@ const smooth = (a: number, b: number, x: number) => {
 
 /** Który narząd / część ciała jest w punkcie (x, y), jak blisko granicy innego i czy to kanał. */
 export function regionAt(x: number, y: number): RegionSample {
+  // Strefa zarażona ma pierwszeństwo (miejsce startu), z płynnym brzegiem.
+  if (zone) {
+    const dz = Math.hypot(x - zone.x, y - zone.y) - zone.r;
+    if (dz < 0) return { a: 'infected', b: 'tissue', t: 0.5 * (1 - smooth(0, BLEND, -dz)), name: ZONE_NAME, channel: -Infinity };
+  }
   let channel = -Infinity;
   let inside: { o: OrganRegion; d: number } | undefined;
   let nearest: OrganRegion | undefined;

@@ -15,6 +15,7 @@ export const TEX = {
   ally: 'ally',
   germ: 'germ',
   prey: 'prey',
+  probiotic: 'probiotic',
   virus: 'virus',
   playerVirus: 'player-virus',
   leukocyte: 'leukocyte',
@@ -54,6 +55,9 @@ export function createTextures(scene: Phaser.Scene): void {
   );
   make(scene, TEX.prey, 140, 92, (c, w, h) =>
     drawRod(c, w, h, { light: '#d6e6ff', mid: '#6f9be0', dark: '#30579a', membrane: '#1e3a6e', granule: '#14284d', pili: false, seed: 'prey' }),
+  );
+  make(scene, TEX.probiotic, 140, 92, (c, w, h) =>
+    drawRod(c, w, h, { light: '#fffbe6', mid: '#f5d76e', dark: '#b8901f', membrane: '#7a5c0a', granule: '#5c4306', pili: false, seed: 'probiotic' }),
   );
   make(scene, TEX.virus, 100, 100, (c, w, h) =>
     drawVirus(c, w, h, {

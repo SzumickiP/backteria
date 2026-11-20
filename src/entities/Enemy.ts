@@ -19,7 +19,9 @@ export type EnemyKind =
   | 'spirochete'
   | 'leukocyte'
   | 'antibody'
-  | 'macrophage';
+  | 'macrophage'
+  | 'infectionNest'
+  | 'lymphNode';
 
 export interface EnemyDef {
   name: string;
@@ -101,6 +103,15 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     name: 'Makrofag', radius: 42, hp: 340, speed: 42, dps: 40, xp: 25, biomass: 0, minThreat: 2,
     texture: TEX.macrophage, texRadius: TEX_RADIUS.leukocyte, burstColor: 0xa5b4fc, motion: 'spin', aggro: 500,
   },
+  // Gniazda z misji — nieruchome, wypuszczają wrogów, trzeba je zniszczyć (nigdy nie pojawiają się losowo).
+  infectionNest: {
+    name: 'Ognisko infekcji', radius: 46, hp: 380, speed: 0, dps: 18, xp: 30, biomass: 10, minThreat: 99,
+    texture: TEX.virus, texRadius: TEX_RADIUS.virus, burstColor: COLORS.burstVirus, motion: 'spin', aggro: 0,
+  },
+  lymphNode: {
+    name: 'Węzeł chłonny', radius: 50, hp: 420, speed: 0, dps: 22, xp: 35, biomass: 0, minThreat: 99,
+    texture: TEX.organ, texRadius: TEX_RADIUS.organ, burstColor: 0xa5b4fc, motion: 'spin', aggro: 0,
+  },
 };
 
 export class Enemy extends Cell {
@@ -122,8 +133,8 @@ export class Enemy extends Cell {
   giveUpUntil = 0;
   /** zadanie „obroń narząd”: ten wróg atakuje narząd */
   missionTarget?: Organ;
-  /** zadanie „zainfekuj narząd”: ten wróg pilnuje narządu */
-  guardOf?: Organ;
+  /** zadanie: ten wróg pilnuje narządu / gniazda */
+  guardOf?: Cell;
 
   /** Statystyki rosną wraz z poziomem zagrożenia. */
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, threat: number) {

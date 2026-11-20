@@ -54,6 +54,13 @@ export function biomeAt(x: number, y: number): BiomeSample {
 
 // ───────────────────────── kształt ścian w biomach ─────────────────────────
 
+/** Strefa zarażona: rozpadła, „zjedzona” tkanka — szerokie przejścia i duże komory (łatwy start). */
+function openInfected(x: number, y: number): number {
+  const n1 = fbm(x / 1100, y / 1100, 121);
+  const n2 = fbm(x / 700 + 9, y / 700 - 4, 122);
+  return Math.max(0.16 - Math.abs(n1), (n2 + 0.1) * 0.5);
+}
+
 /** Mózg: równoległe, pofałdowane zakręty (bruzdy) z poprzecznymi przejściami. */
 function openBrain(x: number, y: number): number {
   const warp = perlin(x / 1100, y / 1100, 101) * 2.2;
@@ -123,6 +130,7 @@ const OPEN: Record<BiomeId, (x: number, y: number) => number> = {
   vessel: openVessel,
   lung: openLung,
   brain: openBrain,
+  infected: openInfected,
   gut: openGut,
 };
 

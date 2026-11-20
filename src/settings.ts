@@ -11,6 +11,7 @@ export type Action =
   | 'ability'
   | 'divide'
   | 'convert'
+  | 'cloak'
   | 'orderFollow'
   | 'orderAttack'
   | 'orderHold'
@@ -21,7 +22,7 @@ export type Action =
   | 'pause';
 
 export const ACTIONS: Action[] = [
-  'up', 'down', 'left', 'right', 'ability', 'divide', 'convert',
+  'up', 'down', 'left', 'right', 'ability', 'divide', 'convert', 'cloak',
   'orderFollow', 'orderAttack', 'orderHold', 'orderForage', 'editor', 'map', 'sound', 'pause',
 ];
 
@@ -33,6 +34,7 @@ export const ACTION_NAMES: Record<Action, string> = {
   ability: 'Atak specjalny (też LPM)',
   divide: 'Podział (też PPM)',
   convert: 'Przerób komórkę',
+  cloak: 'Maskowanie',
   orderFollow: 'Rozkaz: za mną',
   orderAttack: 'Rozkaz: atak',
   orderHold: 'Rozkaz: trzymaj pozycję',
@@ -51,6 +53,7 @@ const DEFAULT_KEYS: Record<Action, string[]> = {
   ability: ['KeyF', ''],
   divide: ['Space', ''],
   convert: ['KeyE', ''],
+  cloak: ['KeyC', ''],
   orderFollow: ['KeyQ', ''],
   orderAttack: ['KeyG', ''],
   orderHold: ['KeyH', ''],

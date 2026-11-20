@@ -11,8 +11,10 @@ import {
   DNA,
   PROGRESSION,
   STRUCTURES,
+  CLOAK,
   FIRST_MISSION_AT,
   GIVE_UP,
+  START_ZONE,
   HOST_CELL_TARGET,
   MISSION_COOLDOWN,
   NUTRIENT_TARGET,
@@ -33,13 +35,13 @@ import { Prey } from '../entities/Prey';
 import { Structure, type StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
 import { drawOrganelles } from '../graphics/organelleDraw';
-import { TEX, createTextures } from '../graphics/textures';
+import { TEX, TEX_RADIUS, createTextures } from '../graphics/textures';
 import { rollMutations, type Mutation, type PlayerStats } from '../mutations';
 import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organelles';
 import { ACTIONS, isKey, settings, type Action } from '../settings';
 import { SPECIES, type SpeciesDef, type SpeciesId } from '../species';
 import { WallLayer } from '../world/WallLayer';
-import { setAnimal, type AnimalId } from '../world/animal';
+import { currentAnimal, inStartZone, partAt, pickStartZone, setAnimal, setStartZone, startZone, type AnimalId } from '../world/animal';
 import { BIOMES, type BiomeId } from '../world/biomes';
 import { Navigator, avoidWalls } from '../world/navigation';
 import { biomeAt, blockedCircle, findOpenSpot, isWall } from '../world/walls';
@@ -74,11 +76,28 @@ interface Mote {
 
 interface Mission {
   type: MissionType;
-  organ: Organ;
+  title: string;
+  /** narząd (obrona / infekcja) */
+  organ?: Organ;
+  /** gniazdo do zniszczenia (ognisko infekcji / węzeł chłonny) */
+  nest?: Enemy;
+  /** rzadkie składniki do zebrania */
+  items?: Nutrient[];
+  /** postęp (zebrane / zarażone) i cel */
+  count: number;
+  goal: number;
   timeLeft: number;
   spawnTimer: number;
   /** odliczanie do następnego wystrzału białka */
   fireTimer: number;
+}
+
+/** Przyjazna postać, którą można spotkać rzadko. */
+interface Friend {
+  cell: Cell;
+  label: Phaser.GameObjects.Text;
+  age: number;
+  wander: number;
 }
 
 /** Pocisk: białko obronne narządu albo toksyna gracza. */
@@ -98,11 +117,17 @@ interface Projectile {
 
 export interface MissionInfo {
   type: MissionType;
+  title: string;
+  /** np. „Zdrowie narządu 80%”, „Zebrane 3/8” */
+  detail: string;
   timeLeft: number;
-  hpFrac: number;
-  x: number;
-  y: number;
+  /** gdzie wskazuje strzałka (brak = misja bez miejsca) */
+  x?: number;
+  y?: number;
 }
+
+/** Ile zarażonych komórek w narządzie potrzeba, by go podbić (wirus). */
+const CONQUEST_PER_ORGAN = 6;
 
 const TAU = Math.PI * 2;
 const MOVE_ACTIONS: Action[] = ['up', 'down', 'left', 'right'];
@@ -148,6 +173,25 @@ export class GameScene extends Phaser.Scene {
   private visited = new Set<string>();
   /** zwierzę, w którym toczy się gra */
   animal: AnimalId = 'mouse';
+  /** podbój organizmu (wirus): postęp w narządach i podbite narządy */
+  private conquest = new Map<string, number>();
+  private conquered = new Set<string>();
+  /** przyjazna postać (rzadka) i odliczanie do następnej */
+  private friend?: Friend;
+  private friendTimer = 0;
+  /** sojusznicy na czas (przyjazne postacie) — kiedy odejdą */
+  private allyExpire = new Map<Cell, number>();
+  private lastMissionType?: MissionType;
+  /** siła czerwonego błysku krawędzi ekranu po trafieniu (0–1, gaśnie) — czyta UIScene */
+  hurtPulse = 0;
+  /** maskowanie: pozostały czas działania i odnowienia (s) */
+  cloakTime = 0;
+  cloakCd = 0;
+
+  get cloaked(): boolean {
+    return this.cloakTime > 0;
+  }
+  private glow!: Phaser.GameObjects.Image;
   /** aktualny rozkaz dla kolonii */
   order: ColonyOrder = 'follow';
   private orderPoint: Point = { x: 0, y: 0 };
@@ -208,13 +252,51 @@ export class GameScene extends Phaser.Scene {
   get missionInfo(): MissionInfo | undefined {
     const m = this.mission;
     if (!m) return undefined;
+    const pct = (c: Cell) => `${Math.round(Phaser.Math.Clamp(c.hp / c.maxHp, 0, 1) * 100)}%`;
+    const base = { type: m.type, title: m.title, timeLeft: Math.max(0, m.timeLeft) };
+    switch (m.type) {
+      case 'defend':
+        return { ...base, detail: `Zdrowie narządu ${pct(m.organ!)}`, x: m.organ!.x, y: m.organ!.y };
+      case 'infect':
+        return { ...base, detail: `Odporność narządu ${pct(m.organ!)}`, x: m.organ!.x, y: m.organ!.y };
+      case 'nest':
+        return { ...base, detail: `Wytrzymałość gniazda ${pct(m.nest!)}`, x: m.nest!.x, y: m.nest!.y };
+      case 'collect': {
+        // Strzałka wskazuje najbliższy niezebrany składnik.
+        const near = this.nearestPoint(m.items ?? [], this.player);
+        return { ...base, detail: `Zebrane ${m.count} / ${m.goal}`, x: near?.x, y: near?.y };
+      }
+      case 'outbreak':
+        return { ...base, detail: `Zarażone ${m.count} / ${m.goal}` };
+    }
+  }
+
+  /** Podbój organizmu przez wirusa: ile narządów podbitych, ile wszystkich, postęp w obecnym. */
+  get conquestInfo(): { done: number; total: number; here?: { name: string; progress: number; goal: number; conquered: boolean } } {
+    const names = this.organNames;
+    const hereName = names.includes(this.regionName) ? this.regionName : undefined;
     return {
-      type: m.type,
-      timeLeft: Math.max(0, m.timeLeft),
-      hpFrac: Phaser.Math.Clamp(m.organ.hp / m.organ.maxHp, 0, 1),
-      x: m.organ.x,
-      y: m.organ.y,
+      done: this.conquered.size,
+      total: names.length,
+      here: hereName
+        ? { name: hereName, progress: this.conquest.get(hereName) ?? 0, goal: CONQUEST_PER_ORGAN, conquered: this.conquered.has(hereName) }
+        : undefined,
     };
+  }
+
+  /** Nazwy narządów bieżącego zwierzęcia (do podboju). */
+  get organNames(): string[] {
+    return [...new Set(currentAnimal().organs.map((o) => o.name))];
+  }
+
+  /** Podbite narządy (do dużej mapy). */
+  get conqueredOrgans(): ReadonlySet<string> {
+    return this.conquered;
+  }
+
+  /** Przyjazna postać w pobliżu (do minimapy). */
+  get friendPos(): Point | undefined {
+    return this.friend ? { x: this.friend.cell.x, y: this.friend.cell.y } : undefined;
   }
 
   get nextMissionIn(): number {
@@ -227,6 +309,10 @@ export class GameScene extends Phaser.Scene {
     // Zwierzę, w którym toczy się gra (świat, narządy, skóra).
     this.animal = data.animal ?? this.animal ?? 'mouse';
     setAnimal(this.animal);
+    // Losowe miejsce startu: strefa zarażona, w której łatwiej zacząć.
+    setStartZone(pickStartZone(Math.random, START_ZONE.radius));
+    this.cloakTime = 0;
+    this.cloakCd = 0;
     this.stats = { ...this.species.stats };
     this.allies = [];
     this.enemies = [];
@@ -253,6 +339,12 @@ export class GameScene extends Phaser.Scene {
     this.biome = 'tissue';
     this.regionName = '';
     this.infections = 0;
+    this.conquest = new Map();
+    this.conquered = new Set();
+    this.friend = undefined;
+    this.friendTimer = Phaser.Math.FloatBetween(60, 90);
+    this.allyExpire = new Map();
+    this.lastMissionType = undefined;
     this.achieved = new Set();
     this.ordersGiven = new Set();
     this.visited = new Set();
@@ -284,7 +376,8 @@ export class GameScene extends Phaser.Scene {
     });
 
     const sp = this.species;
-    const start = findOpenSpot(90);
+    const z = startZone();
+    const start = z ? findOpenSpot(90, z.x, z.y) : findOpenSpot(90);
     this.player = new Cell(this, start.x, start.y, sp.baseRadius, sp.texture, sp.texRadius, this.stats.maxHp).setDepth(5);
     this.player.setRotation(-Math.PI / 2);
 
@@ -299,6 +392,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.flagella = this.add.graphics().setDepth(2.9);
+    this.glow = this.add
+      .image(this.player.x, this.player.y, TEX.blob)
+      .setTint(this.isVirus ? 0x5eead4 : 0x6ee7b7)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(4.95);
+    this.hurtPulse = 0;
     this.organelleGfx = this.add.graphics().setDepth(5.2);
     this.bars = this.add.graphics().setDepth(10);
 
@@ -346,6 +445,12 @@ export class GameScene extends Phaser.Scene {
     if (just('divide')) this.divide();
     if (just('ability')) this.useAbility();
     if (just('convert')) this.requestConvert();
+    if (just('cloak')) this.useCloak();
+    this.cloakCd = Math.max(0, this.cloakCd - dt);
+    if (this.cloakTime > 0) {
+      this.cloakTime -= dt;
+      if (this.cloakTime <= 0) this.endCloak();
+    }
     if (just('orderFollow')) this.issueOrder('follow');
     if (just('orderAttack')) this.issueOrder('attack');
     if (just('orderHold')) this.issueOrder('hold');
@@ -375,8 +480,11 @@ export class GameScene extends Phaser.Scene {
     if (this.over) return;
     this.updateSpawning(dt);
     this.updateMission(dt);
+    this.updateFriends(dt);
     this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.regen * dt);
     this.updateCamera();
+    this.hurtPulse = Math.max(0, this.hurtPulse - dt * 2.5);
+    this.updateGlow();
     this.drawFlagella();
     this.organelleGfx.clear();
     const pl = this.player;
@@ -681,8 +789,32 @@ export class GameScene extends Phaser.Scene {
 
   // ───────────────────────── atak specjalny ─────────────────────────
 
+  // ───────────────────────── maskowanie ─────────────────────────
+
+  private useCloak(): void {
+    if (this.over) return;
+    if (this.cloakCd > 0) {
+      this.game.events.emit(GameEvents.Toast, `Maskowanie gotowe za ${Math.ceil(this.cloakCd)} s`);
+      return;
+    }
+    this.cloakTime = CLOAK.duration;
+    this.cloakCd = CLOAK.cooldown;
+    this.player.setAlpha(0.35);
+    this.ringFx(this.player.x, this.player.y, 0xa5b4fc, this.player.radius * 4);
+    audio.sfx('dash');
+    this.game.events.emit(GameEvents.Toast, 'Maskowanie! Wrogowie Cię nie widzą (atak je przerywa)');
+    // Wrogowie tracą trop — chwilowo odpuszczają pogoń za graczem.
+    for (const e of this.enemies) e.chaseTime = 0;
+  }
+
+  private endCloak(): void {
+    this.cloakTime = 0;
+    this.player.setAlpha(1);
+  }
+
   private useAbility(): void {
     if (this.over || this.abilityCd > 0) return;
+    if (this.cloaked) this.endCloak(); // atak zdradza pozycję
     const dir = this.aimDirection();
     const s = this.stats;
     const p = this.player;
@@ -935,6 +1067,9 @@ export class GameScene extends Phaser.Scene {
     audio.sfx('infect');
     this.infections++;
     if (this.infections >= 30) this.achieve('pandemic');
+    if (this.mission?.type === 'outbreak') this.mission.count++;
+    // Podbój organizmu: każda zarażona komórka przybliża podbój narządu, w którym jest.
+    this.addConquest(biomeAt(c.x, c.y).name, 1);
     this.burst(c.x, c.y, color, 12);
     this.burst(c.x, c.y, COLORS.burstCopy, 6);
     this.releaseCopies(c.x, c.y, this.stats.copies);
@@ -960,7 +1095,8 @@ export class GameScene extends Phaser.Scene {
     const targets: Cell[] = [...this.enemies];
     if (this.isVirus) {
       targets.push(...this.hostCells, ...this.preyBacteria);
-      if (this.mission?.type === 'infect' && this.mission.organ.isAlive) targets.push(this.mission.organ);
+      const mo = this.mission?.organ;
+      if (this.mission?.type === 'infect' && mo?.isAlive) targets.push(mo);
     }
 
     // Umysł zbiorowy: cała kolonia (z graczem jako „mózgiem”) wybiera JEDEN wspólny cel
@@ -1064,7 +1200,8 @@ export class GameScene extends Phaser.Scene {
       const targets: Cell[] = [...this.enemies];
       if (this.isVirus) {
         targets.push(...this.hostCells, ...this.preyBacteria);
-        if (this.mission?.type === 'infect' && this.mission.organ.isAlive) targets.push(this.mission.organ);
+        const mo = this.mission?.organ;
+        if (this.mission?.type === 'infect' && mo?.isAlive) targets.push(mo);
       }
       this.orderTarget = this.nearest(targets, point.x, point.y, 220);
     }
@@ -1188,6 +1325,9 @@ export class GameScene extends Phaser.Scene {
     const p = this.openPoint(this.player, 950, 1200, 30);
     if (!p) return; // spróbujemy w następnej klatce
     this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat);
+    // Strefa zarażona: wrogowie rzadziej i nigdy w samej strefie.
+    if (inStartZone(this.player.x, this.player.y)) this.spawnTimer *= START_ZONE.spawnSlowdown;
+    if (inStartZone(p.x, p.y)) return;
 
     // Rodzaj wroga zależy od biomu, w którym jest gracz.
     const biome = BIOMES[biomeAt(p.x, p.y).a];
@@ -1227,7 +1367,7 @@ export class GameScene extends Phaser.Scene {
     const r = biomeAt(this.player.x, this.player.y);
     if (r.system) this.visited.add(r.system);
     if (this.visited.size >= 4) this.achieve('anatomist');
-    if (r.name === 'Ogon') this.achieve('tail');
+    if (partAt(this.player.x, this.player.y) === 'Ogon') this.achieve('tail');
     if (r.name !== this.regionName) {
       const first = this.regionName === '';
       this.regionName = r.name;
@@ -1271,7 +1411,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateEnemies(dt: number): void {
-    const victims: Cell[] = [this.player, ...this.allies, ...this.structures];
+    // Zamaskowanego gracza wrogowie nie widzą (kolonię i budowle — tak).
+    const victims: Cell[] = [...(this.cloaked ? [] : [this.player]), ...this.allies, ...this.structures];
     const pl = this.player;
     // Stada: wrogowie tego samego rodzaju poruszają się razem.
     const byKind = new Map<EnemyKind, Enemy[]>();
@@ -1396,10 +1537,16 @@ export class GameScene extends Phaser.Scene {
           stopAt = e.radius + victim.radius;
         }
       } else {
-        // Ciągła presja: dryf w stronę gracza.
-        target = pl;
-        stopAt = e.radius + pl.radius;
-        speed *= 0.5;
+        // Ciągła presja: dryf w stronę gracza (zamaskowanego — błądzenie).
+        if (this.cloaked) {
+          const a = this.elapsed * 0.3 + e.phase;
+          target = { x: e.x + Math.cos(a) * 100, y: e.y + Math.sin(a) * 100 };
+          speed *= 0.4;
+        } else {
+          target = pl;
+          stopAt = e.radius + pl.radius;
+          speed *= 0.5;
+        }
       }
       // Droga naokoło ścian (mapa odległości) + czujniki ścian w steerMove.
       const wp = this.waypoint(e, target);
@@ -1411,7 +1558,7 @@ export class GameScene extends Phaser.Scene {
       if (e.motion === 'spin') e.rotation += dt * (e.kind === 'virus' ? 1.5 : e.radius < 10 ? 2 : 0.3);
       else e.faceMovement(dt, e.kind === 'antibody' || e.kind === 'spirochete' ? 8 : 3);
 
-      if (!e.missionTarget && !e.guardOf && dist(e, pl) > ENEMY_DESPAWN_RADIUS) {
+      if (!e.missionTarget && !e.guardOf && e.speed > 0 && dist(e, pl) > ENEMY_DESPAWN_RADIUS) {
         e.destroy();
         return false;
       }
@@ -1422,7 +1569,7 @@ export class GameScene extends Phaser.Scene {
     const limit = this.maxEnemies;
     if (this.enemies.length > limit) {
       const removable = this.enemies
-        .filter((e) => !e.missionTarget && !e.guardOf && dist(e, pl) > GIVE_UP.excessFar)
+        .filter((e) => !e.missionTarget && !e.guardOf && e.speed > 0 && dist(e, pl) > GIVE_UP.excessFar)
         .sort((a, b) => dist(b, pl) - dist(a, pl));
       const drop = new Set(removable.slice(0, this.enemies.length - limit));
       if (drop.size) {
@@ -1478,7 +1625,7 @@ export class GameScene extends Phaser.Scene {
       }
       for (const a of this.allies) {
         if (dist(e, a) < a.radius + e.radius + 3) {
-          e.hurt(s.allyDamage * dt);
+          e.hurt(s.allyDamage * a.damageMul * dt);
           a.hp -= e.dps * s.armor * dt;
           hit = true;
           hurtAllies.add(a);
@@ -1504,7 +1651,7 @@ export class GameScene extends Phaser.Scene {
       if (this.mission?.type === 'infect' && organ?.isAlive) infectables.push(organ);
       for (const c of infectables) {
         if (dist(c, pl) < pl.radius + c.radius + s.reach) c.hp -= s.damage * dt;
-        for (const a of this.allies) if (dist(c, a) < a.radius + c.radius + 3) c.hp -= s.allyDamage * dt;
+        for (const a of this.allies) if (dist(c, a) < a.radius + c.radius + 3) c.hp -= s.allyDamage * a.damageMul * dt;
         if (c.hp < c.maxHp) c.setTint(COLORS.infectTint);
       }
     }
@@ -1515,10 +1662,12 @@ export class GameScene extends Phaser.Scene {
         if (this.dashHits.has(c) || dist(c, pl) > pl.radius + c.radius + 6) continue;
         this.dashHits.add(c);
         c.hurt(s.abilityDamage);
+        this.floatText(c.x, c.y - c.radius, `-${Math.round(s.abilityDamage * c.armorMul)}`, '#5eead4');
         this.burst(c.x, c.y, COLORS.dashTrail, 6);
       }
     }
 
+    if (playerHurt) this.hurtPulse = Math.max(this.hurtPulse, 0.6);
     if (playerHurt || this.playerHitFlash > 0) pl.setTint(COLORS.hurt);
     else pl.resetTint();
     for (const a of this.allies) {
@@ -1583,13 +1732,13 @@ export class GameScene extends Phaser.Scene {
   /** Narząd z zadania strzela białkami w najbliższego napastnika w zasięgu. */
   private updateOrganDefense(dt: number): void {
     const m = this.mission;
-    if (!m || !m.organ.isAlive) return;
+    const o = m?.organ;
+    if (!m || !o?.isAlive) return;
     m.fireTimer -= dt;
     if (m.fireTimer > 0) return;
 
-    const o = m.organ;
     const hostile = m.type === 'infect';
-    const candidates: Cell[] = hostile ? [this.player, ...this.allies] : this.enemies;
+    const candidates: Cell[] = hostile ? [...(this.cloaked ? [] : [this.player]), ...this.allies] : this.enemies;
     const target = this.nearest(candidates, o.x, o.y, PROTEIN.range + o.radius);
     if (!target) return; // timer zostaje ≤ 0 — strzał, gdy tylko ktoś się zbliży
 
@@ -1658,9 +1807,14 @@ export class GameScene extends Phaser.Scene {
         if (!v.isAlive || dist(p.img, v) > v.radius + 5) continue;
         if (v === this.player && dashing) continue; // szarża = nietykalność
         if (p.hostile) v.hp -= p.damage * this.stats.armor;
-        else v.hurt(p.damage);
+        else {
+          v.hurt(p.damage);
+          // Liczby obrażeń tylko dla toksyn gracza (bez „szumu” od wieżyczek i narządów).
+          if (!p.target) this.floatText(v.x, v.y - v.radius, `-${Math.round(p.damage * v.armorMul)}`, '#d9f99d');
+        }
         if (v === this.player) {
           this.playerHitFlash = 0.15;
+          this.hurtPulse = 1;
           audio.sfx('hurt');
         }
         this.burst(p.img.x, p.img.y, p.burstColor, 5);
@@ -1687,41 +1841,134 @@ export class GameScene extends Phaser.Scene {
     }
     m.timeLeft -= dt;
 
-    if (m.type === 'defend') {
-      m.spawnTimer -= dt;
-      if (m.spawnTimer <= 0 && m.timeLeft > 3) {
-        m.spawnTimer = Math.max(0.9, 1.8 - this.threat * 0.08);
-        this.spawnAttacker(m.organ);
+    switch (m.type) {
+      case 'defend': {
+        const o = m.organ!;
+        m.spawnTimer -= dt;
+        if (m.spawnTimer <= 0 && m.timeLeft > 3) {
+          m.spawnTimer = Math.max(0.9, 1.8 - this.threat * 0.08);
+          this.spawnAttacker(o);
+        }
+        if (!o.isAlive) this.endMission(false);
+        else if (m.timeLeft <= 0) this.endMission(true);
+        break;
       }
-      if (!m.organ.isAlive) this.endMission(false);
-      else if (m.timeLeft <= 0) this.endMission(true);
-    } else {
-      if (!m.organ.isAlive) this.endMission(true);
-      else if (m.timeLeft <= 0) this.endMission(false);
+      case 'infect':
+        if (!m.organ!.isAlive) this.endMission(true);
+        else if (m.timeLeft <= 0) this.endMission(false);
+        break;
+      case 'nest': {
+        const n = m.nest!;
+        if (!n.active || n.hp <= 0) {
+          this.endMission(true);
+          break;
+        }
+        // Gniazdo wypuszcza wrogów, którzy go pilnują.
+        m.spawnTimer -= dt;
+        if (m.spawnTimer <= 0) {
+          m.spawnTimer = Math.max(1.6, 3.2 - this.threat * 0.1);
+          const kind: EnemyKind = this.isVirus ? (Math.random() < 0.3 ? 'leukocyte' : 'antibody') : Math.random() < 0.3 ? 'germ' : 'virus';
+          this.spawnGuard(kind, n);
+        }
+        if (m.timeLeft <= 0) this.endMission(false);
+        break;
+      }
+      case 'collect': {
+        const items = m.items ?? [];
+        const collectors: Cell[] = [this.player, ...this.allies];
+        m.items = items.filter((it) => {
+          if (!collectors.some((c) => dist(c, it) < c.radius + it.r + 8)) return true;
+          this.burst(it.x, it.y, 0xfde047, 10);
+          it.destroy();
+          m.count++;
+          audio.sfx('select');
+          return false;
+        });
+        if (m.count >= m.goal) this.endMission(true);
+        else if (m.timeLeft <= 0) this.endMission(false);
+        break;
+      }
+      case 'outbreak':
+        if (m.count >= m.goal) this.endMission(true);
+        else if (m.timeLeft <= 0) this.endMission(false);
+        break;
     }
   }
 
+  /** Losuje rodzaj misji (inny niż poprzedni) i ją rozpoczyna. */
   private startMission(): void {
-    // Narząd potrzebuje dużej wolnej przestrzeni (komora lub szeroki tunel).
-    const p = this.openPoint(this.player, 800, 1250, 110, 40);
-    if (!p) {
-      this.nextMissionAt = this.elapsed + 2;
-      return;
-    }
-    const type: MissionType = this.isVirus ? 'infect' : 'defend';
-    const hp = type === 'defend' ? 220 : Math.round(260 * (1 + 0.1 * (this.threat - 1)));
-    const organ = new Organ(this, p.x, p.y, 48, hp);
-    this.mission = { type, organ, timeLeft: type === 'defend' ? 35 : 45, spawnTimer: 2, fireTimer: 0 };
+    const kinds: MissionType[] = this.isVirus ? ['infect', 'nest', 'outbreak'] : ['defend', 'nest', 'collect'];
+    const pool = kinds.filter((k) => k !== this.lastMissionType);
+    const type = Phaser.Utils.Array.GetRandom(pool) as MissionType;
+    const base = { type, count: 0, goal: 0, spawnTimer: 2, fireTimer: 0 };
+    let subtitle = '';
 
-    if (type === 'defend') {
-      for (let i = 0; i < 4; i++) this.spawnAttacker(organ);
-    } else {
-      const leukos = Math.min(5, 1 + Math.floor(this.threat / 2));
-      for (let i = 0; i < leukos; i++) this.spawnGuard('leukocyte', organ);
-      for (let i = 0; i < 6; i++) this.spawnGuard('antibody', organ);
+    switch (type) {
+      case 'defend':
+      case 'infect': {
+        // Narząd potrzebuje dużej wolnej przestrzeni (komora lub szeroki tunel).
+        const p = this.openPoint(this.player, 800, 1250, 110, 40);
+        if (!p) return this.retryMissionSoon();
+        const hp = type === 'defend' ? 220 : Math.round(260 * (1 + 0.1 * (this.threat - 1)));
+        const organ = new Organ(this, p.x, p.y, 48, hp);
+        if (type === 'defend') {
+          this.mission = { ...base, title: 'Obroń narząd', organ, timeLeft: 35 };
+          subtitle = 'Leć za strzałką i obroń go';
+          for (let i = 0; i < 4; i++) this.spawnAttacker(organ);
+        } else {
+          this.mission = { ...base, title: 'Zainfekuj narząd', organ, timeLeft: 45 };
+          subtitle = 'Zainfekuj narząd, zanim upłynie czas';
+          const leukos = Math.min(5, 1 + Math.floor(this.threat / 2));
+          for (let i = 0; i < leukos; i++) this.spawnGuard('leukocyte', organ);
+          for (let i = 0; i < 6; i++) this.spawnGuard('antibody', organ);
+        }
+        break;
+      }
+      case 'nest': {
+        const p = this.openPoint(this.player, 800, 1200, 90, 40);
+        if (!p) return this.retryMissionSoon();
+        const nest = this.spawnEnemy(this.isVirus ? 'lymphNode' : 'infectionNest', p);
+        if (this.isVirus) {
+          nest.baseTint = 0x9aa8ff;
+          nest.resetTint();
+        }
+        const title = this.isVirus ? 'Zniszcz węzeł chłonny' : 'Zniszcz ognisko infekcji';
+        this.mission = { ...base, title, nest, timeLeft: 50, spawnTimer: 1 };
+        subtitle = 'Gniazdo wypuszcza wrogów — zniszcz je na czas';
+        for (let i = 0; i < 3; i++) this.spawnGuard(this.isVirus ? 'antibody' : 'virus', nest);
+        break;
+      }
+      case 'collect': {
+        const center = this.openPoint(this.player, 650, 950, 60, 40);
+        if (!center) return this.retryMissionSoon();
+        const items: Nutrient[] = [];
+        for (let i = 0; i < 8; i++) {
+          const q = this.openPoint(center, 0, 420, 16, 12);
+          if (!q) continue;
+          const it = new Nutrient(this, q.x, q.y, 10, 0xfde047).setDepth(2.5);
+          this.tweens.add({ targets: it, scale: it.scale * 1.35, duration: 500, yoyo: true, repeat: -1 });
+          items.push(it);
+        }
+        if (items.length < 4) {
+          for (const it of items) it.destroy();
+          return this.retryMissionSoon();
+        }
+        this.mission = { ...base, title: 'Zbierz rzadkie składniki', items, goal: items.length, timeLeft: 40 };
+        subtitle = `Złote cząstki — zbierz wszystkie (${items.length}) na czas`;
+        break;
+      }
+      case 'outbreak':
+        this.mission = { ...base, title: 'Wywołaj epidemię', goal: 10, timeLeft: 45 };
+        subtitle = 'Zaraź 10 komórek w 45 sekund';
+        break;
     }
-    this.game.events.emit(GameEvents.MissionStart, type);
+    this.lastMissionType = type;
+    this.game.events.emit(GameEvents.MissionStart, this.mission!.title, subtitle);
     audio.sfx('alarm');
+  }
+
+  private retryMissionSoon(): void {
+    this.nextMissionAt = this.elapsed + 2;
   }
 
   private spawnAttacker(organ: Organ): void {
@@ -1731,9 +1978,9 @@ export class GameScene extends Phaser.Scene {
     this.spawnEnemy(kind, p).missionTarget = organ;
   }
 
-  private spawnGuard(kind: EnemyKind, organ: Organ): void {
-    const p = this.openPoint(organ, organ.radius + 60, organ.radius + 160, 30) ?? { x: organ.x, y: organ.y };
-    this.spawnEnemy(kind, p).guardOf = organ;
+  private spawnGuard(kind: EnemyKind, around: Cell): void {
+    const p = this.openPoint(around, around.radius + 60, around.radius + 160, 30) ?? { x: around.x, y: around.y };
+    this.spawnEnemy(kind, p).guardOf = around;
   }
 
   private endMission(success: boolean): void {
@@ -1742,37 +1989,212 @@ export class GameScene extends Phaser.Scene {
     this.nextMissionAt = this.elapsed + MISSION_COOLDOWN;
 
     for (const e of this.enemies) {
-      if (e.missionTarget === m.organ) e.missionTarget = undefined;
-      if (e.guardOf === m.organ) e.guardOf = undefined;
+      if (m.organ && e.missionTarget === m.organ) e.missionTarget = undefined;
+      if (e.guardOf && (e.guardOf === m.organ || e.guardOf === m.nest)) e.guardOf = undefined;
     }
 
-    const o = m.organ;
+    let detail = '';
     if (success) {
       this.missionsDone++;
       this.achieve('defender');
       if (this.missionsDone >= 3) this.achieve('hero');
       this.dna += DNA.perMission;
-      this.game.events.emit(GameEvents.Toast, `+${DNA.perMission} DNA za zadanie — V: edytor komórki`);
       this.gainXp(Math.round(PROGRESSION.missionXpBase + PROGRESSION.missionXpPerThreat * this.threat));
-      if (m.type === 'defend') {
-        this.biomass += PROGRESSION.missionBiomass;
-        this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * PROGRESSION.missionHeal);
-        this.burst(o.x, o.y, COLORS.burstOrgan, 16);
-      } else {
-        o.setTint(COLORS.infectedOrgan);
-        this.burst(o.x, o.y, COLORS.burstCopy, 24);
-        this.releaseCopies(o.x, o.y, 5);
+      detail = `Nagroda: doświadczenie i +${DNA.perMission} DNA`;
+      switch (m.type) {
+        case 'defend': {
+          const o = m.organ!;
+          this.biomass += PROGRESSION.missionBiomass;
+          this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * PROGRESSION.missionHeal);
+          this.burst(o.x, o.y, COLORS.burstOrgan, 16);
+          detail += ', biomasa i leczenie';
+          break;
+        }
+        case 'infect': {
+          const o = m.organ!;
+          o.setTint(COLORS.infectedOrgan);
+          this.burst(o.x, o.y, COLORS.burstCopy, 24);
+          this.releaseCopies(o.x, o.y, 5);
+          // Zainfekowany narząd mocno przybliża podbój tego miejsca w organizmie.
+          this.addConquest(biomeAt(o.x, o.y).name, 3);
+          detail += ' i nowe kopie';
+          break;
+        }
+        case 'nest':
+          this.dna += 1;
+          this.achieve('nest-buster');
+          detail = `Gniazdo zniszczone! Nagroda: doświadczenie i +${DNA.perMission + 1} DNA`;
+          break;
+        case 'collect':
+          this.biomass += 25;
+          this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * 0.2);
+          detail += ', biomasa i leczenie';
+          break;
+        case 'outbreak':
+          this.releaseCopies(this.player.x, this.player.y, 3);
+          detail += ' i nowe kopie';
+          break;
       }
-    } else if (m.type === 'defend') {
-      o.destroyOrgan();
-      this.burst(o.x, o.y, COLORS.burstOrgan, 24);
-      this.cameras.main.shake(250, 0.008);
+    } else {
+      switch (m.type) {
+        case 'defend': {
+          const o = m.organ!;
+          o.destroyOrgan();
+          this.burst(o.x, o.y, COLORS.burstOrgan, 24);
+          this.cameras.main.shake(250, 0.008);
+          detail = 'Narząd został zniszczony';
+          break;
+        }
+        case 'infect':
+          detail = 'Narząd się obronił';
+          break;
+        case 'nest':
+          if (m.nest?.active) {
+            this.burst(m.nest.x, m.nest.y, m.nest.burstColor, 10);
+            m.nest.destroy();
+            this.enemies = this.enemies.filter((e) => e !== m.nest);
+          }
+          detail = 'Gniazdo przetrwało i się wycofało';
+          break;
+        case 'collect':
+          detail = 'Nie zdążyłeś zebrać wszystkiego';
+          break;
+        case 'outbreak':
+          detail = 'Epidemia wygasła';
+          break;
+      }
+    }
+    // Sprzątanie: niezebrane składniki znikają, narząd zanika po chwili.
+    for (const it of m.items ?? []) it.destroy();
+    const o = m.organ;
+    if (o) this.tweens.add({ targets: o, alpha: 0, delay: 2500, duration: 2000, onComplete: () => o.destroy() });
+
+    this.game.events.emit(GameEvents.MissionEnd, m.title, success, detail);
+    audio.sfx(success ? 'success' : 'fail');
+  }
+
+  // ───────────────────────── podbój organizmu (wirus) ─────────────────────────
+
+  /** Dodaje postęp podboju narządu; po osiągnięciu progu narząd jest podbity. */
+  private addConquest(name: string, amount: number): void {
+    if (!this.isVirus || this.over || this.conquered.has(name) || !this.organNames.includes(name)) return;
+    const v = (this.conquest.get(name) ?? 0) + amount;
+    this.conquest.set(name, v);
+    if (v < CONQUEST_PER_ORGAN) return;
+    this.conquered.add(name);
+    const total = this.organNames.length;
+    this.game.events.emit(GameEvents.Conquest, name, this.conquered.size, total);
+    audio.sfx('success');
+    this.gainXp(10);
+    if (this.conquered.size >= total) this.victory();
+  }
+
+  /** Wygrana wirusa: cały organizm podbity. */
+  private victory(): void {
+    this.over = true;
+    this.achieve('conqueror');
+    audio.sfx('levelup');
+    audio.setTheme('menu');
+    audio.setIntensity(0);
+    this.flagella.clear();
+    this.bars.clear();
+    const summary: GameSummary = {
+      species: this.species.id,
+      time: this.elapsed,
+      level: this.level,
+      kills: this.kills,
+      missions: this.missionsDone,
+    };
+    this.game.events.emit(GameEvents.Victory, summary);
+  }
+
+  // ───────────────────────── przyjazne postacie (rzadkie) ─────────────────────────
+
+  private updateFriends(dt: number): void {
+    // Sojusznicy na czas odchodzą po upływie czasu.
+    for (const [a, until] of this.allyExpire) {
+      if (a.active && this.elapsed < until) continue;
+      this.allyExpire.delete(a);
+      if (a.active) {
+        this.burst(a.x, a.y, 0xfde68a, 12);
+        a.destroy();
+        this.allies = this.allies.filter((x) => x !== a);
+        this.game.events.emit(GameEvents.Toast, 'Przyjazny sojusznik odpłynął');
+      }
     }
 
-    // Narząd znika po chwili.
-    this.tweens.add({ targets: o, alpha: 0, delay: 2500, duration: 2000, onComplete: () => o.destroy() });
-    this.game.events.emit(GameEvents.MissionEnd, m.type, success);
-    audio.sfx(success ? 'success' : 'fail');
+    const f = this.friend;
+    if (!f) {
+      this.friendTimer -= dt;
+      if (this.friendTimer <= 0) {
+        this.friendTimer = Phaser.Math.FloatBetween(90, 140);
+        this.spawnFriend();
+      }
+      return;
+    }
+    f.age += dt;
+    const c = f.cell;
+    // Spokojne błąkanie się.
+    f.wander += Phaser.Math.FloatBetween(-0.8, 0.8) * dt;
+    this.steerMove(c, c.x + Math.cos(f.wander) * 100, c.y + Math.sin(f.wander) * 100, 45, dt, 0);
+    if (this.species.rod) c.faceMovement(dt, 4);
+    else c.rotation += dt;
+    c.setPulse(1 + Math.sin(this.elapsed * 3) * 0.05);
+    f.label.setPosition(c.x, c.y - c.radius * 1.6 - 14);
+
+    const d = dist(c, this.player);
+    if (d < c.radius + this.player.radius + 25) {
+      this.recruitFriend();
+    } else if (f.age > 75 || d > DESPAWN_RADIUS) {
+      this.burst(c.x, c.y, 0xfde68a, 8);
+      c.destroy();
+      f.label.destroy();
+      this.friend = undefined;
+    }
+  }
+
+  private spawnFriend(): void {
+    const p = this.openPoint(this.player, 550, 850, 30, 20);
+    if (!p) return;
+    const virus = this.isVirus;
+    const c = virus
+      ? new Cell(this, p.x, p.y, 12, TEX.playerVirus, TEX_RADIUS.virus, 1)
+      : new Cell(this, p.x, p.y, 14, TEX.probiotic, TEX_RADIUS.rod, 1);
+    if (virus) {
+      c.baseTint = 0xf9a8d4;
+      c.resetTint();
+    }
+    c.setDepth(4.2);
+    const name = virus ? 'Wirus satelitarny' : 'Pałeczka kwasu mlekowego';
+    const label = this.add
+      .text(p.x, p.y, `★ ${name} (przyjazna)`, { fontFamily: 'system-ui, sans-serif', fontSize: '12px', color: '#fde68a', stroke: '#1c0a10', strokeThickness: 3 })
+      .setOrigin(0.5)
+      .setDepth(10);
+    this.friend = { cell: c, label, age: 0, wander: Math.random() * TAU };
+    this.game.events.emit(GameEvents.Friend, `★ W pobliżu jest przyjazna postać: ${name}! (żółta gwiazdka na minimapie)`);
+    audio.sfx('swell');
+  }
+
+  /** Spotkanie przyjaznej postaci: leczenie, DNA i silny sojusznik na 60 s. */
+  private recruitFriend(): void {
+    const f = this.friend!;
+    this.friend = undefined;
+    const c = f.cell;
+    f.label.destroy();
+    this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * 0.25);
+    this.dna += 1;
+    const sp = this.species;
+    const a = new Cell(this, c.x, c.y, sp.allyRadius * 1.5, c.texture.key, sp.texRadius, this.stats.allyMaxHp * 3).setDepth(4);
+    a.baseTint = c.baseTint;
+    a.resetTint();
+    a.damageMul = 2.5;
+    c.destroy();
+    this.allies.push(a);
+    this.allyExpire.set(a, this.elapsed + 60);
+    this.burst(a.x, a.y, 0xfde68a, 20);
+    this.achieve('friendship');
+    audio.sfx('levelup');
+    this.game.events.emit(GameEvents.Friend, '★ Przyjaciel dołączył na 60 s! Leczenie i +1 DNA');
   }
 
   // ───────────────────────── rozwój ─────────────────────────
@@ -1782,6 +2204,7 @@ export class GameScene extends Phaser.Scene {
     while (this.xp >= this.xpToNext) {
       this.xp -= this.xpToNext;
       this.level++;
+      this.ringFx(this.player.x, this.player.y, 0xfde68a, this.player.radius * 5);
       audio.sfx('levelup');
       if (this.level >= 10) this.achieve('level10');
       this.pendingLevelUps++;
@@ -1811,6 +2234,7 @@ export class GameScene extends Phaser.Scene {
     audio.setIntensity(0);
     this.burst(this.player.x, this.player.y, this.isVirus ? COLORS.burstCopy : COLORS.burstPlayer, 24);
     this.player.setVisible(false);
+    this.glow.setVisible(false);
     this.flagella.clear();
     this.organelleGfx.clear();
     this.bars.clear();
@@ -1949,6 +2373,45 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ───────────────────────── pomocnicze ─────────────────────────
+
+  // ───────────────────────── efekty wizualne ─────────────────────────
+
+  /** Rozchodzący się pierścień (awans, ważne zdarzenia). */
+  private ringFx(x: number, y: number, color: number, radius: number): void {
+    const ring = this.add.circle(x, y, radius, 0x000000, 0).setStrokeStyle(4, color, 0.9).setDepth(6).setScale(0.15);
+    this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 650, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+  }
+
+  /** Unoszący się napis (np. liczba obrażeń). */
+  private floatText(x: number, y: number, text: string, color: string): void {
+    const t = this.add
+      .text(x + Phaser.Math.Between(-6, 6), y, text, { fontFamily: 'system-ui, sans-serif', fontSize: '14px', fontStyle: 'bold', color, stroke: '#1c0a10', strokeThickness: 3 })
+      .setOrigin(0.5)
+      .setDepth(11);
+    this.tweens.add({ targets: t, y: y - 34, alpha: 0, duration: 700, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  }
+
+  /** Poświata pod graczem — łatwiej go dostrzec w tłumie. */
+  private updateGlow(): void {
+    const p = this.player;
+    this.glow
+      .setPosition(p.x, p.y)
+      .setScale((p.radius / 5) * (1 + Math.sin(this.elapsed * 3) * 0.08))
+      .setAlpha(0.22 + 0.06 * Math.sin(this.elapsed * 3));
+  }
+
+  private nearestPoint<T extends Point>(list: T[], from: Point): T | undefined {
+    let best: T | undefined;
+    let bestD = Infinity;
+    for (const p of list) {
+      const d = dist(p, from);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
 
   /** Wywołuje `spawn`, dopóki `need()` — ale najwyżej `maxAttempts` razy (żeby nie zawiesić gry). */
   private fill(need: () => boolean, spawn: () => boolean, maxAttempts: number): void {

@@ -26,6 +26,20 @@ const MUTED = '#c29aa8';
 const ACCENT = '#6ee7b7';
 const SHADOW = { offsetX: 0, offsetY: 1, color: '#000000', blur: 4, fill: true };
 
+/** Kolor znacznika zadania: obrona — różowy, cele wirusa — fiolet, gniazda — czerwony, zbieranie — złoty. */
+function missionColor(type: MissionType): number {
+  switch (type) {
+    case 'defend':
+      return 0xf472b6;
+    case 'nest':
+      return 0xef4444;
+    case 'collect':
+      return 0xfde047;
+    default:
+      return 0xa78bfa;
+  }
+}
+
 const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 /** HUD, komunikaty, wybór mutacji, wskaźnik zadania, pauza i ekran końca gry — warstwa nad GameScene. */
@@ -95,8 +109,11 @@ export class UIScene extends Phaser.Scene {
       [GameEvents.ConvertClose, () => this.closeConvert()],
       [GameEvents.Toast, (msg: string) => this.showToast(msg)],
       [GameEvents.GameOver, (s: GameSummary) => this.showGameOver(s)],
-      [GameEvents.MissionStart, (type: MissionType) => this.onMissionStart(type)],
-      [GameEvents.MissionEnd, (type: MissionType, success: boolean) => this.onMissionEnd(type, success)],
+      [GameEvents.MissionStart, (title: string, subtitle: string) => this.onMissionStart(title, subtitle)],
+      [GameEvents.MissionEnd, (title: string, success: boolean, detail: string) => this.onMissionEnd(title, success, detail)],
+      [GameEvents.Conquest, (name: string, done: number, total: number) => this.showBanner(`Podbito: ${name}`, `Podbój organizmu ${done} / ${total}`)],
+      [GameEvents.Victory, (s: GameSummary) => this.showGameOver(s, true)],
+      [GameEvents.Friend, (msg: string) => this.showToast(msg)],
     ];
     for (const [name, fn] of handlers) ev.on(name, fn);
 
@@ -131,6 +148,13 @@ export class UIScene extends Phaser.Scene {
     const lines = [`${g.species.name} · poziom ${g.level} · DNA ${g.dna}${g.dna > 0 ? ' (V — buduj)' : ''}`];
     if (!g.isVirus) lines.push(`Biomasa ${Math.floor(g.biomass)}`);
     lines.push(`${g.species.colonyLabel} ${g.allies.length}/${g.stats.maxColony} · rozkaz: ${ORDER_NAMES[g.order]}`);
+    // Główna misja wirusa: podbój całego organizmu.
+    if (g.isVirus) {
+      const c = g.conquestInfo;
+      const here = c.here ? ` · ${c.here.name}: ${c.here.conquered ? 'podbity ✓' : `${c.here.progress}/${c.here.goal}`}` : '';
+      lines.push(`Podbój organizmu ${c.done}/${c.total}${here}`);
+    }
+    lines.push(`Maskowanie (${keyLabel('cloak')}): ${g.cloaked ? `aktywne ${g.cloakTime.toFixed(1)} s` : g.cloakCd > 0 ? `${Math.ceil(g.cloakCd)} s` : 'gotowe'}`);
     lines.push(`Budowle ${g.structures.length}/${CONVERT.maxStructures} · przeróbka (E): ${g.convertCd > 0 ? `${Math.ceil(g.convertCd)} s` : 'gotowa'}`);
     lines.push(`${g.species.abilityName} (LPM/F): ${g.abilityCd > 0 ? `${g.abilityCd.toFixed(1)} s` : 'gotowe'}`);
     this.statsText.setText(lines);
@@ -154,7 +178,17 @@ export class UIScene extends Phaser.Scene {
       .setPosition(16, height - 12);
 
     this.banner.setPosition(width / 2, height * 0.3);
-    this.toast.setPosition(width / 2, height - 150);
+    // Komunikaty nad panelem mutacji (nie nachodzą na niego).
+    this.toast.setPosition(width / 2, height - 215);
+
+    // Krawędzie ekranu: czerwony błysk przy trafieniu i pulsowanie przy niskim zdrowiu.
+    const lowHp = hpFrac < 0.3 ? 0.18 + 0.14 * Math.sin(this.time.now / 160) : 0;
+    const edge = Math.max(g.hurtPulse * 0.45, lowHp);
+    if (edge > 0.01) {
+      for (let i = 0; i < 4; i++) {
+        this.hud.lineStyle(14 + i * 12, 0xdc2626, edge * (1 - i * 0.24)).strokeRect(0, 0, width, height);
+      }
+    }
   }
 
   // ───────────────────────── osiągnięcia ─────────────────────────
@@ -260,6 +294,10 @@ export class UIScene extends Phaser.Scene {
       const color = o.name === 'Serce' ? 0xff3b3b : SYSTEMS[o.system].color;
       for (const s of o.shapes) shape(s, color, o.channel ? 0.85 : 0.95);
     }
+    // Wirus: narządy już podbite — fioletowa nakładka.
+    if (this.gs.isVirus) {
+      for (const o of animal.organs) if (this.gs.conqueredOrgans.has(o.name)) for (const s of o.shapes) shape(s, 0x7c3aed, 0.65);
+    }
     c.add(g);
 
     // Podpisy narządów.
@@ -299,7 +337,9 @@ export class UIScene extends Phaser.Scene {
     dots.clear();
     for (const s of g.structures) dots.fillStyle(STRUCTURES[s.kind].tint, 1).fillRect(ox + s.x * k - 3, oy + s.y * k - 3, 6, 6);
     const m = g.missionInfo;
-    if (m) dots.fillStyle(m.type === 'defend' ? 0xf472b6 : 0xa78bfa, 1).fillCircle(ox + m.x * k, oy + m.y * k, 5);
+    if (m?.x !== undefined && m.y !== undefined) dots.fillStyle(missionColor(m.type), 1).fillCircle(ox + m.x * k, oy + m.y * k, 5);
+    const fr = g.friendPos;
+    if (fr) dots.fillStyle(0xfde68a, 1).fillCircle(ox + fr.x * k, oy + fr.y * k, 5);
     const pulse = 5 + Math.sin(this.time.now / 160) * 2;
     dots.lineStyle(2, 0xffffff, 1).strokeCircle(ox + g.player.x * k, oy + g.player.y * k, pulse + 3);
     dots.fillStyle(0x6ee7b7, 1).fillCircle(ox + g.player.x * k, oy + g.player.y * k, 4);
@@ -391,12 +431,19 @@ export class UIScene extends Phaser.Scene {
       const p = toMap(a.x, a.y);
       if (inside(p)) dots.fillStyle(0x86efac, 1).fillCircle(p.x, p.y, 1.5);
     }
+    const pulse = 3.5 + Math.sin(this.time.now / 180) * 1.2;
+    const clampIn = (p: { x: number; y: number }) => ({ x: Phaser.Math.Clamp(p.x, x0 + 4, x0 + S - 4), y: Phaser.Math.Clamp(p.y, y0 + 4, y0 + S - 4) });
     const m = g.missionInfo;
-    if (m) {
-      const p = toMap(m.x, m.y);
-      const c = { x: Phaser.Math.Clamp(p.x, x0 + 4, x0 + S - 4), y: Phaser.Math.Clamp(p.y, y0 + 4, y0 + S - 4) };
-      const pulse = 3.5 + Math.sin(this.time.now / 180) * 1.2;
-      dots.fillStyle(m.type === 'defend' ? 0xf472b6 : 0xa78bfa, 1).fillCircle(c.x, c.y, pulse);
+    if (m?.x !== undefined && m.y !== undefined) {
+      const c = clampIn(toMap(m.x, m.y));
+      dots.fillStyle(missionColor(m.type), 1).fillCircle(c.x, c.y, pulse);
+    }
+    // Przyjazna postać — żółta gwiazdka.
+    const fr = g.friendPos;
+    if (fr) {
+      const c = clampIn(toMap(fr.x, fr.y));
+      dots.fillStyle(0xfde68a, 1).fillCircle(c.x, c.y, pulse);
+      dots.lineStyle(1.5, 0xffffff, 0.9).strokeCircle(c.x, c.y, pulse + 2.5);
     }
     const pp = toMap(g.player.x, g.player.y);
     dots.fillStyle(0xffffff, 1).fillCircle(pp.x, pp.y, 3);
@@ -416,19 +463,26 @@ export class UIScene extends Phaser.Scene {
       return;
     }
 
-    const label = m.type === 'defend' ? 'Obroń narząd' : 'Zainfekuj narząd';
     this.missionText
-      .setText(`Zadanie: ${label} — ${Math.ceil(m.timeLeft)} s\n${m.type === 'defend' ? 'Zdrowie' : 'Odporność'} narządu ${Math.round(m.hpFrac * 100)}%`)
+      .setText(`Zadanie: ${m.title} — ${Math.ceil(m.timeLeft)} s\n${m.detail}`)
       .setColor('#fde68a')
       .setPosition(width / 2, 16);
 
-    // Pozycja narządu na ekranie.
+    // Misja bez miejsca (np. epidemia) — bez strzałki.
+    if (m.x === undefined || m.y === undefined) {
+      this.arrowText.setVisible(false);
+      return;
+    }
+    const mx = m.x;
+    const my = m.y;
+
+    // Pozycja celu na ekranie.
     const cam = g.cameras.main;
-    const sx = (m.x - cam.worldView.x) * cam.zoom;
-    const sy = (m.y - cam.worldView.y) * cam.zoom;
+    const sx = (mx - cam.worldView.x) * cam.zoom;
+    const sy = (my - cam.worldView.y) * cam.zoom;
     const margin = 48;
     const onScreen = sx > margin && sx < width - margin && sy > margin && sy < height - margin;
-    const color = m.type === 'defend' ? 0xf472b6 : 0xa78bfa;
+    const color = missionColor(m.type);
 
     if (onScreen) {
       // Pulsujący pierścień wokół narządu.
@@ -453,21 +507,19 @@ export class UIScene extends Phaser.Scene {
     this.hud.fillStyle(0x000000, 0.5).fillCircle(ax, ay, 20);
     this.hud.fillStyle(color, 1).fillTriangle(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
 
-    const worldDist = Math.hypot(m.x - g.player.x, m.y - g.player.y);
+    const worldDist = Math.hypot(mx - g.player.x, my - g.player.y);
     this.arrowText
       .setVisible(true)
       .setText(`${Math.round(worldDist / 10)} µm`)
       .setPosition(ax - Math.cos(ang) * 34, ay - Math.sin(ang) * 34);
   }
 
-  private onMissionStart(type: MissionType): void {
-    if (type === 'defend') this.showBanner('Narząd zaatakowany!', 'Leć za strzałką i obroń go');
-    else this.showBanner('Nowy cel!', 'Zainfekuj narząd, zanim upłynie czas');
+  private onMissionStart(title: string, subtitle: string): void {
+    this.showBanner(`Nowe zadanie: ${title}`, subtitle);
   }
 
-  private onMissionEnd(type: MissionType, success: boolean): void {
-    if (success) this.showBanner('Zadanie wykonane!', type === 'defend' ? 'Narząd ocalał · nagroda' : 'Narząd zainfekowany · nowe kopie');
-    else this.showBanner('Zadanie nieudane', type === 'defend' ? 'Narząd został zniszczony' : 'Narząd się obronił');
+  private onMissionEnd(title: string, success: boolean, detail: string): void {
+    this.showBanner(success ? `Wykonane: ${title}` : `Nieudane: ${title}`, detail);
   }
 
   // ───────────────────────── komunikaty ─────────────────────────
@@ -706,7 +758,7 @@ export class UIScene extends Phaser.Scene {
 
   // ───────────────────────── koniec gry ─────────────────────────
 
-  private showGameOver(s: GameSummary): void {
+  private showGameOver(s: GameSummary, victory = false): void {
     this.mutationPanel?.destroy();
     this.mutationPanel = undefined;
     this.closeConvert();
@@ -717,7 +769,12 @@ export class UIScene extends Phaser.Scene {
 
     c.add(
       this.add
-        .text(width / 2, height / 2 - 60, SPECIES[s.species].deathText, { fontFamily: FONT, fontSize: '32px', fontStyle: 'bold', color: '#fca5a5' })
+        .text(width / 2, height / 2 - 60, victory ? `${currentAnimal().inside.replace('Wnętrze', 'Organizm')} podbity! Wygrana!` : SPECIES[s.species].deathText, {
+          fontFamily: FONT,
+          fontSize: '32px',
+          fontStyle: 'bold',
+          color: victory ? '#86efac' : '#fca5a5',
+        })
         .setOrigin(0.5),
     );
     c.add(
