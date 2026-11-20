@@ -1,6 +1,6 @@
 import type { EnemyKind } from '../entities/Enemy';
 
-export type BiomeId = 'tissue' | 'vessel' | 'lung' | 'gut';
+export type BiomeId = 'tissue' | 'vessel' | 'lung' | 'gut' | 'brain';
 export type RGB = [number, number, number];
 
 export interface BiomeDef {
@@ -69,5 +69,17 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     minimap: [176, 112, 60],
     enemies: { toxigen: 2.5, bacillus: 2, germ: 2, virus: 1 },
     immune: { antibody: 3, leukocyte: 1.5 },
+  },
+  brain: {
+    id: 'brain',
+    name: 'Mózg',
+    wallDeep: [120, 88, 100],
+    wallMid: [196, 158, 166],
+    rim: [242, 214, 220],
+    floor: [70, 40, 70],
+    floorAlpha: 0.25,
+    minimap: [210, 170, 180],
+    enemies: { virus: 2.5, spirochete: 1.5, coccus: 1 },
+    immune: { antibody: 2, leukocyte: 1, macrophage: 1.2 },
   },
 };

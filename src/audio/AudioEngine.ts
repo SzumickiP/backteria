@@ -74,6 +74,10 @@ const THEMES: Record<MusicTheme, Theme> = {
     root: 40, scale: [0, 1, 5, 7, 8], bpm: 68, pad: 'square', filter: 480, extra: 'gurgle',
     chords: [[0, 3, 7, 12], [1, 5, 8, 13], [-2, 1, 5, 10], [0, 3, 7, 12]],
   },
+  brain: {
+    root: 47, scale: [0, 2, 3, 7, 9], bpm: 52, pad: 'sine', filter: 2200,
+    chords: [[0, 3, 7, 10], [5, 9, 12, 15], [-2, 2, 5, 9], [3, 7, 10, 14]],
+  },
 };
 
 /** Minimalny odstęp (s) między odtworzeniami tego samego efektu — żeby nie było „karabinu”. */

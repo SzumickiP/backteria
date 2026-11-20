@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
+import { ACHIEVEMENTS, achievementCount } from '../account/achievements';
 import { getAccount } from '../account/accounts';
 import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
 import { CHUNK } from '../config';
+import { isKey, keyLabel } from '../settings';
 import { GameEvents } from '../events';
 import { TEX, createTextures } from '../graphics/textures';
 import { SPECIES, type SpeciesId } from '../species';
@@ -29,7 +31,7 @@ export class MenuScene extends Phaser.Scene {
       .text(width / 2, height * 0.14, 'Backteria', { fontFamily: FONT, fontSize: '56px', fontStyle: 'bold', color: '#f5e9ee', stroke: '#1c0a10', strokeThickness: 8 })
       .setOrigin(0.5);
     this.add
-      .text(width / 2, height * 0.14 + 52, 'Wybierz, kim chcesz zagrać', { fontFamily: FONT, fontSize: '18px', color: '#c29aa8' })
+      .text(width / 2, height * 0.14 + 52, 'Wnętrze myszy czeka — wybierz, kim chcesz zagrać', { fontFamily: FONT, fontSize: '18px', color: '#c29aa8' })
       .setOrigin(0.5);
 
     const narrow = width < 640;
@@ -107,7 +109,7 @@ export class MenuScene extends Phaser.Scene {
       .text(16, height - 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8' })
       .setOrigin(0, 1)
       .setInteractive({ useHandCursor: true });
-    const showSound = () => soundText.setText(`Dźwięk: ${SOUND_MODE_NAMES[audio.mode]}  [N]`);
+    const showSound = () => soundText.setText(`Dźwięk: ${SOUND_MODE_NAMES[audio.mode]}  [${keyLabel('sound')}]`);
     const cycleSound = () => {
       audio.cycleMode();
       audio.sfx('click');
@@ -119,12 +121,38 @@ export class MenuScene extends Phaser.Scene {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'Digit1' || e.code === 'Numpad1') this.pick('bacterium');
       if (e.code === 'Digit2' || e.code === 'Numpad2') this.pick('virus');
-      if (e.code === 'KeyN') cycleSound();
+      if (isKey('sound', e.code)) cycleSound();
     };
+
+    // Ustawienia (sterowanie, mysz, dźwięk) — menu czeka zatrzymane.
+    const settingsBtn = this.add
+      .text(16, 16, '⚙ Ustawienia', { fontFamily: FONT, fontSize: '15px', color: '#f5e9ee', backgroundColor: '#2a1019', padding: { x: 10, y: 6 } })
+      .setInteractive({ useHandCursor: true });
+    settingsBtn.on('pointerdown', () => {
+      audio.sfx('click');
+      this.scene.launch('SettingsScene', { from: 'menu' });
+      this.scene.bringToTop('SettingsScene');
+      this.scene.pause();
+    });
+    this.events.on(Phaser.Scenes.Events.RESUME, showSound);
+
+    // Osiągnięcia gracza.
+    if (nick) {
+      const achBtn = this.add
+        .text(16, 52, `🏆 Osiągnięcia ${achievementCount(nick)}/${ACHIEVEMENTS.length}`, {
+          fontFamily: FONT, fontSize: '15px', color: '#fde68a', backgroundColor: '#2a1019', padding: { x: 10, y: 6 },
+        })
+        .setInteractive({ useHandCursor: true });
+      achBtn.on('pointerdown', () => {
+        audio.sfx('click');
+        this.showAchievements(nick);
+      });
+    }
     this.input.keyboard!.on('keydown', onKey);
     const onResize = () => this.scene.restart();
     this.scale.on('resize', onResize);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.events.off(Phaser.Scenes.Events.RESUME, showSound);
       this.input.keyboard?.off('keydown', onKey);
       this.scale.off('resize', onResize);
     });
@@ -136,7 +164,51 @@ export class MenuScene extends Phaser.Scene {
     });
   }
 
+  private achPanel?: Phaser.GameObjects.Container;
+
+  /** Lista wszystkich osiągnięć: zdobyte (złote) i do zdobycia (szare). */
+  private showAchievements(nick: string): void {
+    this.achPanel?.destroy();
+    const { width, height } = this.scale;
+    const got = getAccount(nick)?.achievements ?? {};
+    const c = this.add.container(0, 0).setDepth(100);
+    c.add(this.add.rectangle(0, 0, width, height, 0x0d0408, 0.93).setOrigin(0).setInteractive());
+    c.add(
+      this.add
+        .text(width / 2, 18, `Osiągnięcia — ${achievementCount(nick)} / ${ACHIEVEMENTS.length}`, { fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#fde68a' })
+        .setOrigin(0.5, 0),
+    );
+    const cols = width < 760 ? 1 : 2;
+    const colW = Math.min(360, (width - 48) / cols);
+    const rowH = Math.min(52, (height - 140) / Math.ceil(ACHIEVEMENTS.length / cols));
+    const x0 = (width - colW * cols - 16 * (cols - 1)) / 2;
+    ACHIEVEMENTS.forEach((a, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = x0 + col * (colW + 16);
+      const y = 66 + row * rowH;
+      const done = Boolean(got[a.id]);
+      c.add(this.add.rectangle(x, y, colW, rowH - 6, done ? 0x2a1a0c : 0x1c1015, 0.95).setOrigin(0).setStrokeStyle(1, done ? 0xfbbf24 : 0x3a2a30));
+      c.add(
+        this.add.text(x + 10, y + 5, `${done ? '🏆' : '🔒'} ${a.name}`, { fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: done ? '#fde68a' : '#8a7a80' }),
+      );
+      c.add(this.add.text(x + 10, y + 24, a.description, { fontFamily: FONT, fontSize: '12px', color: done ? '#f5e9ee' : '#6a5a60' }));
+    });
+    const close = this.add
+      .text(width / 2, height - 20, 'Zamknij', { fontFamily: FONT, fontSize: '16px', color: '#1c0a10', backgroundColor: '#6ee7b7', padding: { x: 14, y: 6 } })
+      .setOrigin(0.5, 1)
+      .setInteractive({ useHandCursor: true });
+    close.on('pointerdown', () => {
+      audio.sfx('click');
+      this.achPanel?.destroy();
+      this.achPanel = undefined;
+    });
+    c.add(close);
+    this.achPanel = c;
+  }
+
   private pick(id: SpeciesId): void {
+    if (this.achPanel) return; // lista osiągnięć otwarta
     audio.sfx('select');
     this.scene.start('GameScene', { species: id });
   }

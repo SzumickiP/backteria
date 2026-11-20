@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { audio } from '../audio/AudioEngine';
 import { drawOrganelles } from '../graphics/organelleDraw';
 import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organelles';
+import { isKey, keyLabel } from '../settings';
 import type { GameScene } from './GameScene';
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -78,7 +79,7 @@ export class EditorScene extends Phaser.Scene {
     }
 
     const done = this.add
-      .text(narrow ? width / 2 : px + pw / 2, narrow ? height - 30 : py + 16, 'Gotowe — wróć do gry  [V / Esc]', {
+      .text(narrow ? width / 2 : px + pw / 2, narrow ? height - 30 : py + 16, `Gotowe — wróć do gry  [${keyLabel('editor')} / Esc]`, {
         fontFamily: FONT, fontSize: '16px', color: '#1c0a10', backgroundColor: '#6ee7b7', padding: { x: 14, y: 7 },
       })
       .setOrigin(0.5, 0)
@@ -88,7 +89,7 @@ export class EditorScene extends Phaser.Scene {
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onClick(p));
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'KeyV' || e.code === 'Escape') this.close();
+      if (isKey('editor', e.code) || e.code === 'Escape') this.close();
     };
     this.input.keyboard!.on('keydown', onKey);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.input.keyboard?.off('keydown', onKey));

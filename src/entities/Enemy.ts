@@ -116,6 +116,10 @@ export class Enemy extends Cell {
   readonly phase = Math.random() * Math.PI * 2;
   /** odliczanie do strzału (pałeczka toksynotwórcza) */
   fireTimer = Phaser.Math.FloatBetween(0.5, 1.5);
+  /** jak długo goni ofiarę bez dosięgnięcia jej (s) */
+  chaseTime = 0;
+  /** do kiedy (czas gry) wróg „odpuścił” i odpływa */
+  giveUpUntil = 0;
   /** zadanie „obroń narząd”: ten wróg atakuje narząd */
   missionTarget?: Organ;
   /** zadanie „zainfekuj narząd”: ten wróg pilnuje narządu */

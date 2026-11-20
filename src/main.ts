@@ -6,6 +6,7 @@ import { GameEvents } from './events';
 import { EditorScene } from './scenes/EditorScene';
 import { GameScene } from './scenes/GameScene';
 import { MenuScene } from './scenes/MenuScene';
+import { SettingsScene } from './scenes/SettingsScene';
 import { UIScene } from './scenes/UIScene';
 import { biomeAt, openness } from './world/walls';
 
@@ -21,7 +22,7 @@ const config: Phaser.Types.Core.GameConfig = {
   // Dźwięk robi własny silnik (src/audio) — wbudowany dźwięk Phasera jest niepotrzebny.
   audio: { noAudio: true },
   // Automatycznie startuje tylko pierwsza scena (menu). GameScene uruchamia UIScene.
-  scene: [MenuScene, GameScene, UIScene, EditorScene],
+  scene: [MenuScene, GameScene, UIScene, EditorScene, SettingsScene],
 };
 
 let game: Phaser.Game | undefined;

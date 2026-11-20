@@ -41,6 +41,18 @@ export const STRUCTURES = {
 /** Punkty DNA na budowę komórki (edytor, klawisz V): 1 punkt co `everyLevels` poziomów + za zadania. */
 export const DNA = { everyLevels: 2, perMission: 1 } as const;
 
+/** Wrogowie odpuszczają pościg i nadmiar wrogów jest usuwany. */
+export const GIVE_UP = {
+  /** po ilu sekundach pościgu bez dosięgnięcia ofiary wróg odpuszcza */
+  after: 12,
+  /** jak długo odpuszcza (s) */
+  duration: 8,
+  /** odpuszczający wróg znika, gdy oddali się na tyle od gracza (px) */
+  despawnAt: 1100,
+  /** nadmiarowi wrogowie dalej niż tyle od gracza (poza ekranem) są usuwani */
+  excessFar: 900,
+} as const;
+
 /** Rozwój gracza: krzywa doświadczenia i nagrody. */
 export const PROGRESSION = {
   xpBase: 10,

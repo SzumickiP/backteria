@@ -12,6 +12,7 @@ import {
   PROGRESSION,
   STRUCTURES,
   FIRST_MISSION_AT,
+  GIVE_UP,
   HOST_CELL_TARGET,
   MISSION_COOLDOWN,
   NUTRIENT_TARGET,
@@ -21,6 +22,8 @@ import {
   THREAT_PERIOD,
   TOXIN,
 } from '../config';
+import { unlockAchievement } from '../account/achievements';
+import { updateAccount } from '../account/accounts';
 import { audio } from '../audio/AudioEngine';
 import { Cell } from '../entities/Cell';
 import { ENEMY_DEFS, Enemy, type EnemyKind } from '../entities/Enemy';
@@ -33,6 +36,7 @@ import { drawOrganelles } from '../graphics/organelleDraw';
 import { TEX, createTextures } from '../graphics/textures';
 import { rollMutations, type Mutation, type PlayerStats } from '../mutations';
 import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organelles';
+import { ACTIONS, isKey, settings, type Action } from '../settings';
 import { SPECIES, type SpeciesDef, type SpeciesId } from '../species';
 import { WallLayer } from '../world/WallLayer';
 import { BIOMES, type BiomeId } from '../world/biomes';
@@ -40,7 +44,6 @@ import { Navigator, avoidWalls } from '../world/navigation';
 import { biomeAt, blockedCircle, findOpenSpot, isWall } from '../world/walls';
 
 type ControlMode = 'none' | 'mouse' | 'keyboard';
-type KeyName = 'up' | 'down' | 'left' | 'right' | 'w' | 'a' | 's' | 'd' | 'space' | 'f' | 'e' | 'q' | 'g' | 'h' | 't' | 'v';
 
 /** Rozkazy dla kolonii / kopii. */
 export type ColonyOrder = 'follow' | 'attack' | 'hold' | 'forage';
@@ -101,7 +104,7 @@ export interface MissionInfo {
 }
 
 const TAU = Math.PI * 2;
-const MOVE_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const MOVE_ACTIONS: Action[] = ['up', 'down', 'left', 'right'];
 const MOTE_COUNT = 45;
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -135,6 +138,12 @@ export class GameScene extends Phaser.Scene {
   private organelleGfx!: Phaser.GameObjects.Graphics;
   /** biom, w którym jest gracz */
   biome: BiomeId = 'tissue';
+  /** miejsce w ciele myszy (narząd / część ciała) */
+  regionName = '';
+  // Liczniki do osiągnięć (w tej grze).
+  private infections = 0;
+  private ordersGiven = new Set<ColonyOrder>();
+  private visited = new Set<string>();
   /** aktualny rozkaz dla kolonii */
   order: ColonyOrder = 'follow';
   private orderPoint: Point = { x: 0, y: 0 };
@@ -167,7 +176,11 @@ export class GameScene extends Phaser.Scene {
   private offerOpen = false;
   private over = false;
   private control: ControlMode = 'none';
-  private keys!: Record<KeyName, Phaser.Input.Keyboard.Key>;
+  /** klawisze trzymane teraz / wciśnięte od ostatniej klatki (KeyboardEvent.code) */
+  private held = new Set<string>();
+  private pressed = new Set<string>();
+  /** czy gracz używał myszy (celowanie kursorem) */
+  private pointerSeen = false;
   private bars!: Phaser.GameObjects.Graphics;
   private flagella!: Phaser.GameObjects.Graphics;
 
@@ -231,6 +244,11 @@ export class GameScene extends Phaser.Scene {
     this.nav = new Navigator();
     this.flowTimer = 0;
     this.biome = 'tissue';
+    this.regionName = '';
+    this.infections = 0;
+    this.achieved = new Set();
+    this.ordersGiven = new Set();
+    this.visited = new Set();
     this.biomeCheck = 0;
     this.order = 'follow';
     this.orderTarget = undefined;
@@ -292,6 +310,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.scene.isActive('UIScene')) this.scene.launch('UIScene');
     this.game.events.emit(GameEvents.Start);
     audio.playMusic(biomeAt(this.player.x, this.player.y).a);
+
+    // Osiągnięcie „Dwie strony”: zapamiętaj, kim gracz już grał.
+    const nick = this.registry.get('account') as string | undefined;
+    if (nick) {
+      let both = false;
+      updateAccount(nick, (acc) => {
+        acc.played = [...new Set([...(acc.played ?? []), this.species.id])];
+        both = acc.played.length >= 2;
+      });
+      if (both) this.achieve('both-sides');
+    }
   }
 
   update(_time: number, delta: number): void {
@@ -303,14 +332,18 @@ export class GameScene extends Phaser.Scene {
     this.convertCd = Math.max(0, this.convertCd - dt);
     this.updateBiome(dt);
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.space)) this.divide();
-    if (Phaser.Input.Keyboard.JustDown(this.keys.f)) this.useAbility();
-    if (Phaser.Input.Keyboard.JustDown(this.keys.e)) this.requestConvert();
-    if (Phaser.Input.Keyboard.JustDown(this.keys.q)) this.issueOrder('follow');
-    if (Phaser.Input.Keyboard.JustDown(this.keys.g)) this.issueOrder('attack');
-    if (Phaser.Input.Keyboard.JustDown(this.keys.h)) this.issueOrder('hold');
-    if (Phaser.Input.Keyboard.JustDown(this.keys.t)) this.issueOrder('forage');
-    if (Phaser.Input.Keyboard.JustDown(this.keys.v)) {
+    // Klawisze wg ustawień gracza (można je zmienić w Ustawieniach).
+    const pressed = this.pressed;
+    this.pressed = new Set();
+    const just = (a: Action) => settings.keys[a].some((c) => c && pressed.has(c));
+    if (just('divide')) this.divide();
+    if (just('ability')) this.useAbility();
+    if (just('convert')) this.requestConvert();
+    if (just('orderFollow')) this.issueOrder('follow');
+    if (just('orderAttack')) this.issueOrder('attack');
+    if (just('orderHold')) this.issueOrder('hold');
+    if (just('orderForage')) this.issueOrder('forage');
+    if (just('editor')) {
       this.openEditor();
       return;
     }
@@ -385,6 +418,7 @@ export class GameScene extends Phaser.Scene {
     this.dna -= def.cost;
     audio.sfx('build');
     this.organelles.push(placed);
+    if (this.organelles.length >= 5) this.achieve('builder');
     this.recomputeStats();
     return undefined;
   }
@@ -440,6 +474,7 @@ export class GameScene extends Phaser.Scene {
     this.structures.push(s);
     this.convertCd = CONVERT.cooldown;
     audio.sfx('structure');
+    this.achieve('architect');
     this.burst(s.x, s.y, STRUCTURES[kind].tint, 20);
 
     // Limit budowli — najstarsza się rozpada.
@@ -533,31 +568,28 @@ export class GameScene extends Phaser.Scene {
 
   private setupInput(): void {
     const kb = this.input.keyboard!;
-    this.keys = {
-      up: kb.addKey('UP'),
-      down: kb.addKey('DOWN'),
-      left: kb.addKey('LEFT'),
-      right: kb.addKey('RIGHT'),
-      w: kb.addKey('W'),
-      a: kb.addKey('A'),
-      s: kb.addKey('S'),
-      d: kb.addKey('D'),
-      space: kb.addKey('SPACE'),
-      f: kb.addKey('F'),
-      e: kb.addKey('E'),
-      q: kb.addKey('Q'),
-      g: kb.addKey('G'),
-      h: kb.addKey('H'),
-      t: kb.addKey('T'),
-      v: kb.addKey('V'),
-    };
+    this.held.clear();
+    this.pressed.clear();
 
+    const isBound = (code: string) => ACTIONS.some((a) => isKey(a, code));
     const onKey = (e: KeyboardEvent) => {
-      if (MOVE_CODES.has(e.code)) this.control = 'keyboard';
+      // Klawisze gry nie mogą przewijać strony / przenosić fokusu (np. Tab, Spacja, strzałki).
+      if (isBound(e.code)) e.preventDefault();
+      if (!e.repeat) this.pressed.add(e.code);
+      this.held.add(e.code);
+      if (MOVE_ACTIONS.some((a) => isKey(a, e.code))) this.control = 'keyboard';
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      this.held.delete(e.code);
     };
     const onMove = () => {
-      this.control = 'mouse';
+      this.pointerSeen = true;
+      if (settings.mouseFollow) this.control = 'mouse';
     };
+    // Po pauzie / edytorze / utracie fokusu klawisze mogły zostać puszczone bez zdarzenia.
+    const releaseAll = () => this.held.clear();
+    this.events.on(Phaser.Scenes.Events.RESUME, releaseAll);
+    window.addEventListener('blur', releaseAll);
     const onDown = (p: Phaser.Input.Pointer) => {
       // Klik w element interfejsu (np. kartę mutacji) nie jest atakiem.
       const ui = this.scene.get('UIScene');
@@ -567,15 +599,24 @@ export class GameScene extends Phaser.Scene {
     };
 
     kb.on('keydown', onKey);
+    kb.on('keyup', onKeyUp);
     this.input.on('pointermove', onMove);
     this.input.on('pointerdown', onDown);
     this.input.mouse?.disableContextMenu();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       kb.off('keydown', onKey);
+      kb.off('keyup', onKeyUp);
       this.input.off('pointermove', onMove);
       this.input.off('pointerdown', onDown);
+      this.events.off(Phaser.Scenes.Events.RESUME, releaseAll);
+      window.removeEventListener('blur', releaseAll);
     });
+  }
+
+  /** Czy akcja jest teraz wciśnięta (którykolwiek z jej klawiszy). */
+  private holding(a: Action): boolean {
+    return settings.keys[a].some((c) => c && this.held.has(c));
   }
 
   private movePlayer(dt: number): void {
@@ -592,9 +633,8 @@ export class GameScene extends Phaser.Scene {
       const x0 = p.x;
       const y0 = p.y;
       if (this.control === 'keyboard') {
-        const k = this.keys;
-        const dx = Number(k.right.isDown || k.d.isDown) - Number(k.left.isDown || k.a.isDown);
-        const dy = Number(k.down.isDown || k.s.isDown) - Number(k.up.isDown || k.w.isDown);
+        const dx = Number(this.holding('right')) - Number(this.holding('left'));
+        const dy = Number(this.holding('down')) - Number(this.holding('up'));
         if (dx || dy) {
           const len = Math.hypot(dx, dy);
           p.tryMove((dx / len) * speed * dt, (dy / len) * speed * dt);
@@ -620,7 +660,8 @@ export class GameScene extends Phaser.Scene {
 
   /** Kierunek ataku: do kursora (mysz) albo w kierunku ostatniego ruchu (klawiatura). */
   private aimDirection(): Point {
-    if (this.control === 'mouse') {
+    // Celowanie kursorem działa też przy sterowaniu klawiaturą (gdy mysz była użyta).
+    if (this.control === 'mouse' || this.pointerSeen) {
       const ptr = this.input.activePointer;
       ptr.updateWorldPoint(this.cameras.main);
       const dx = ptr.worldX - this.player.x;
@@ -885,6 +926,8 @@ export class GameScene extends Phaser.Scene {
   /** Komórka/bakteria zainfekowana do końca pęka i uwalnia kopie wirusa. */
   private onInfected(c: Cell, xp: number, color: number): void {
     audio.sfx('infect');
+    this.infections++;
+    if (this.infections >= 30) this.achieve('pandemic');
     this.burst(c.x, c.y, color, 12);
     this.burst(c.x, c.y, COLORS.burstCopy, 6);
     this.releaseCopies(c.x, c.y, this.stats.copies);
@@ -1001,7 +1044,7 @@ export class GameScene extends Phaser.Scene {
     this.order = order;
     const p = this.player;
     let point: Point;
-    if (this.control === 'mouse') {
+    if (this.control === 'mouse' || this.pointerSeen) {
       const ptr = this.input.activePointer;
       ptr.updateWorldPoint(this.cameras.main);
       point = { x: ptr.worldX, y: ptr.worldY };
@@ -1021,6 +1064,8 @@ export class GameScene extends Phaser.Scene {
     if (order === 'attack' || order === 'hold') this.burst(point.x, point.y, 0x5eead4, 8);
     this.game.events.emit(GameEvents.Toast, `Rozkaz: ${ORDER_NAMES[order]}`);
     audio.sfx('order');
+    if (this.allies.length > 0) this.ordersGiven.add(order);
+    if (this.ordersGiven.size >= 4) this.achieve('commander');
   }
 
   // ───────────────────────── zachowanie stadne ─────────────────────────
@@ -1129,7 +1174,7 @@ export class GameScene extends Phaser.Scene {
   private updateSpawning(dt: number): void {
     const t = this.threat;
     const D = DIFFICULTY;
-    const maxAlive = Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(t * D.maxAlivePerThreat));
+    const maxAlive = this.maxEnemies;
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0 || this.enemies.length >= maxAlive) return;
 
@@ -1166,12 +1211,27 @@ export class GameScene extends Phaser.Scene {
     const near = this.enemies.filter((e) => dist(e, this.player) < 600).length;
     audio.setIntensity(near / 12 + (this.threat - 1) * 0.04);
 
-    const b = biomeAt(this.player.x, this.player.y).a;
-    if (b !== this.biome) {
-      this.biome = b;
-      this.game.events.emit(GameEvents.BiomeChange, BIOMES[b].name);
-      audio.setTheme(b);
-      audio.sfx('swell');
+    // Osiągnięcia sprawdzane okresowo.
+    if (this.elapsed >= 180) this.achieve('survivor');
+    if (this.elapsed >= 600) this.achieve('veteran');
+    if (this.allies.length >= 5) this.achieve('colony');
+
+    // Miejsce w ciele myszy (narząd / część ciała) i jego biom.
+    const r = biomeAt(this.player.x, this.player.y);
+    this.visited.add(r.name);
+    if (['Mózg', 'Serce', 'Płuca', 'Jelita'].every((n) => this.visited.has(n))) this.achieve('anatomist');
+    if (r.name === 'Ogon') this.achieve('tail');
+    if (r.name !== this.regionName) {
+      const first = this.regionName === '';
+      this.regionName = r.name;
+      if (!first) {
+        this.game.events.emit(GameEvents.BiomeChange, r.name);
+        audio.sfx('swell');
+      }
+    }
+    if (r.a !== this.biome) {
+      this.biome = r.a;
+      audio.setTheme(r.a);
     }
   }
 
@@ -1220,9 +1280,20 @@ export class GameScene extends Phaser.Scene {
     const victimOf = new Map<Enemy, Cell>();
     const packs = new Map<Cell, Map<EnemyKind, Enemy[]>>();
     for (const e of this.enemies) {
+      // Odpuścił — przez chwilę nikogo nie goni.
+      if (this.elapsed < e.giveUpUntil) continue;
       const v = this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
       if (!v) continue;
       victimOf.set(e, v);
+      // Długi pościg bez dosięgnięcia ofiary → wróg odpuszcza.
+      if (dist(e, v) < e.radius + v.radius + 12) e.chaseTime = 0;
+      else e.chaseTime += dt;
+      if (e.chaseTime > GIVE_UP.after && !e.missionTarget && !e.guardOf) {
+        e.chaseTime = 0;
+        e.giveUpUntil = this.elapsed + GIVE_UP.duration;
+        victimOf.delete(e);
+        continue;
+      }
       if (e.def.shooter || e.missionTarget || e.guardOf) continue;
       let byK = packs.get(v);
       if (!byK) packs.set(v, (byK = new Map()));
@@ -1265,6 +1336,20 @@ export class GameScene extends Phaser.Scene {
       let target: Point;
       let stopAt = 0;
       let speed = e.speed;
+
+      // Odpuszczający wróg odpływa od gracza; gdy oddali się poza ekran — znika.
+      if (this.elapsed < e.giveUpUntil) {
+        const d = dist(e, pl);
+        if (d > GIVE_UP.despawnAt) {
+          e.destroy();
+          return false;
+        }
+        const away = Math.atan2(e.y - pl.y, e.x - pl.x) + Math.sin(this.elapsed + e.phase) * 0.6;
+        this.steerMove(e, e.x + Math.cos(away) * 100, e.y + Math.sin(away) * 100, speed * 0.6, dt, 0);
+        if (e.motion === 'spin') e.rotation += dt;
+        else e.faceMovement(dt, 3);
+        return true;
+      }
 
       // Pałeczka toksynotwórcza: trzyma dystans i strzela.
       if (e.def.shooter && victim && !e.missionTarget) {
@@ -1325,6 +1410,40 @@ export class GameScene extends Phaser.Scene {
       }
       return true;
     });
+
+    // Nadmiar wrogów: usuń najdalszych (poza ekranem), aż liczba spadnie do limitu.
+    const limit = this.maxEnemies;
+    if (this.enemies.length > limit) {
+      const removable = this.enemies
+        .filter((e) => !e.missionTarget && !e.guardOf && dist(e, pl) > GIVE_UP.excessFar)
+        .sort((a, b) => dist(b, pl) - dist(a, pl));
+      const drop = new Set(removable.slice(0, this.enemies.length - limit));
+      if (drop.size) {
+        for (const e of drop) e.destroy();
+        this.enemies = this.enemies.filter((e) => !drop.has(e));
+      }
+    }
+  }
+
+  /** Odblokowuje osiągnięcie na koncie gracza (jeśli jeszcze go nie ma) i pokazuje powiadomienie. */
+  private achieve(id: string): void {
+    const nick = this.registry.get('account') as string | undefined;
+    if (!nick) return;
+    if (this.achieved.has(id)) return; // szybki filtr — bez czytania konta co klatkę
+    this.achieved.add(id);
+    const def = unlockAchievement(nick, id);
+    if (def) {
+      this.game.events.emit(GameEvents.Achievement, def);
+      audio.sfx('success');
+    }
+  }
+
+  private achieved = new Set<string>();
+
+  /** Limit wrogów naraz przy obecnym zagrożeniu. */
+  private get maxEnemies(): number {
+    const D = DIFFICULTY;
+    return Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(this.threat * D.maxAlivePerThreat));
   }
 
   // ───────────────────────── walka i infekcja ─────────────────────────
@@ -1420,6 +1539,9 @@ export class GameScene extends Phaser.Scene {
       this.gainXp(e.xp);
       this.burst(e.x, e.y, e.burstColor, e.radius > 15 ? 14 : 8);
       audio.sfx(e.radius > 20 ? 'popBig' : 'pop');
+      this.achieve('first-blood');
+      if (this.kills >= 100) this.achieve('hunter');
+      if (e.kind === 'mycobacterium' || e.kind === 'macrophage') this.achieve('giant-slayer');
       // Laseczka przetrwalnikowa: po śmierci uwalnia przetrwalniki.
       const od = e.def.onDeath;
       if (od) for (let i = 0; i < od.count; i++) spawned.push([od.kind, { x: e.x + Phaser.Math.Between(-12, 12), y: e.y + Phaser.Math.Between(-12, 12) }]);
@@ -1620,6 +1742,8 @@ export class GameScene extends Phaser.Scene {
     const o = m.organ;
     if (success) {
       this.missionsDone++;
+      this.achieve('defender');
+      if (this.missionsDone >= 3) this.achieve('hero');
       this.dna += DNA.perMission;
       this.game.events.emit(GameEvents.Toast, `+${DNA.perMission} DNA za zadanie — V: edytor komórki`);
       this.gainXp(Math.round(PROGRESSION.missionXpBase + PROGRESSION.missionXpPerThreat * this.threat));
@@ -1652,6 +1776,7 @@ export class GameScene extends Phaser.Scene {
       this.xp -= this.xpToNext;
       this.level++;
       audio.sfx('levelup');
+      if (this.level >= 10) this.achieve('level10');
       this.pendingLevelUps++;
       if (this.level % DNA.everyLevels === 0) {
         this.dna += 1;

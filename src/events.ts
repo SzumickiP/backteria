@@ -15,6 +15,8 @@ export const GameEvents = {
   BiomeChange: 'bt-biome-change',
   /** gracz chce się wylogować (obsługa w main.ts) */
   Logout: 'bt-logout',
+  /** zdobyto osiągnięcie (argument: AchievementDef) */
+  Achievement: 'bt-achievement',
 } as const;
 
 export type MissionType = 'defend' | 'infect';

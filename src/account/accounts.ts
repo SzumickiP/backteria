@@ -21,6 +21,19 @@ export interface Account {
   created: number;
   games: number;
   best: Partial<Record<SpeciesId, BestResult>>;
+  /** zdobyte osiągnięcia: id → data zdobycia */
+  achievements?: Record<string, number>;
+  /** postacie, którymi gracz już grał */
+  played?: SpeciesId[];
+}
+
+/** Zmienia konto i zapisuje je. */
+export function updateAccount(nick: string, change: (acc: Account) => void): void {
+  const all = load();
+  const acc = all[keyOf(nick)];
+  if (!acc) return;
+  change(acc);
+  save(all);
 }
 
 const ACCOUNTS_KEY = 'backteria.accounts';

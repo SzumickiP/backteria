@@ -1,12 +1,19 @@
 import Phaser from 'phaser';
+import type { AchievementDef } from '../account/achievements';
 import { recordResult } from '../account/accounts';
 import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
 import { CONVERT, STRUCTURES } from '../config';
 import type { StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
 import type { Mutation } from '../mutations';
+import { isKey, keyLabel, keyName, settings } from '../settings';
 import { SPECIES } from '../species';
+import { BODY_BOUNDS, BODY_PARTS, ORGANS, type Shape } from '../world/animal';
 import { BIOMES } from '../world/biomes';
+
+/** Kształt powiększony o `d` px (obrys skóry na dużej mapie). */
+const grow = (s: Shape, d: number): Shape =>
+  s.kind === 'ellipse' ? { ...s, rx: s.rx + d, ry: s.ry + d } : { ...s, ra: s.ra + d, rb: s.rb + d };
 import { biomeAt, openness } from '../world/walls';
 import { ORDER_NAMES, type GameScene } from './GameScene';
 
@@ -80,7 +87,8 @@ export class UIScene extends Phaser.Scene {
 
     const ev = this.game.events;
     const handlers: [string, (...args: never[]) => void][] = [
-      [GameEvents.BiomeChange, (name: string) => this.showBanner(name, 'Nowy biom')],
+      [GameEvents.BiomeChange, (name: string) => this.showBanner(name, 'Wnętrze myszy')],
+      [GameEvents.Achievement, (def: AchievementDef) => this.queueAchievement(def)],
       [GameEvents.Start, () => this.onStart()],
       [GameEvents.LevelUp, (choices: Mutation[], pending: number) => this.showMutations(choices, pending)],
       [GameEvents.ConvertOffer, () => this.showConvert()],
@@ -139,18 +147,150 @@ export class UIScene extends Phaser.Scene {
 
     this.updateMissionUi(width, height);
     this.updateMinimap(width, height);
+    this.updateBigMap();
 
     this.hint
-      .setText([
-        g.isVirus
-          ? 'Mysz/WASD — ruch  ·  LPM/F — szarża  ·  dotknij komórki — zaraź  ·  E — przerób komórkę  ·  Esc — pauza'
-          : `Mysz/WASD — ruch  ·  LPM/F — toksyny  ·  Spacja/PPM — podział (${g.stats.divideCost})  ·  E — przerób komórkę  ·  Esc — pauza`,
-        `Rozkazy (miejsce = kursor):  Q — za mną  ·  G — atak  ·  H — trzymaj pozycję  ·  T — ${g.isVirus ? 'zarażaj' : 'zbieraj'}   ·   V — edytor komórki   ·   N — dźwięk`,
-      ])
+      .setText(this.hintLines(g.isVirus, g.stats.divideCost))
       .setPosition(16, height - 12);
 
     this.banner.setPosition(width / 2, height * 0.3);
     this.toast.setPosition(width / 2, height - 150);
+  }
+
+  // ───────────────────────── osiągnięcia ─────────────────────────
+
+  private achievementQueue: AchievementDef[] = [];
+  private achievementShowing = false;
+
+  private queueAchievement(def: AchievementDef): void {
+    this.achievementQueue.push(def);
+    if (!this.achievementShowing) this.showNextAchievement();
+  }
+
+  /** Złota plakietka u góry ekranu; kilka osiągnięć naraz pokazuje się po kolei. */
+  private showNextAchievement(): void {
+    const def = this.achievementQueue.shift();
+    if (!def) {
+      this.achievementShowing = false;
+      return;
+    }
+    this.achievementShowing = true;
+    const { width } = this.scale;
+    const w = Math.min(380, width - 32);
+    const c = this.add.container(width / 2, 70).setDepth(130).setAlpha(0);
+    c.add(this.add.rectangle(0, 0, w, 62, 0x2a1a0c, 0.95).setStrokeStyle(2, 0xfbbf24));
+    c.add(this.add.text(0, -14, `🏆 Osiągnięcie: ${def.name}`, { fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#fde68a' }).setOrigin(0.5));
+    c.add(this.add.text(0, 12, def.description, { fontFamily: FONT, fontSize: '13px', color: TEXT }).setOrigin(0.5));
+    this.tweens.add({
+      targets: c,
+      alpha: 1,
+      y: 80,
+      duration: 250,
+      hold: 2800,
+      yoyo: true,
+      onComplete: () => {
+        c.destroy();
+        this.showNextAchievement();
+      },
+    });
+  }
+
+  // ───────────────────────── duża mapa (wnętrze myszy) ─────────────────────────
+
+  private bigMap?: Phaser.GameObjects.Container;
+  private bigMapDots?: Phaser.GameObjects.Graphics;
+  private bigMapView = { ox: 0, oy: 0, k: 1 };
+
+  private toggleBigMap(): void {
+    if (this.bigMap) {
+      this.bigMap.destroy();
+      this.bigMap = undefined;
+      this.bigMapDots = undefined;
+      return;
+    }
+    audio.sfx('click');
+    const { width, height } = this.scale;
+    const B = BODY_BOUNDS;
+    const pad = 30;
+    const k = Math.min((width - pad * 2) / (B.maxX - B.minX), (height - pad * 2 - 50) / (B.maxY - B.minY));
+    const ox = (width - (B.maxX - B.minX) * k) / 2 - B.minX * k;
+    const oy = 50 + (height - 50 - (B.maxY - B.minY) * k) / 2 - B.minY * k;
+    this.bigMapView = { ox, oy, k };
+
+    const c = this.add.container(0, 0).setDepth(140);
+    c.add(this.add.rectangle(0, 0, width, height, 0x0d0408, 0.88).setOrigin(0));
+    c.add(
+      this.add
+        .text(width / 2, 14, `Wnętrze myszy   ·   ${keyLabel('map')} — zamknij`, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: TEXT })
+        .setOrigin(0.5, 0),
+    );
+
+    const g = this.add.graphics();
+    const shape = (s: Shape, color: number, alpha = 1) => {
+      g.fillStyle(color, alpha);
+      if (s.kind === 'ellipse') {
+        g.fillEllipse(ox + s.x * k, oy + s.y * k, s.rx * 2 * k, s.ry * 2 * k);
+        return;
+      }
+      const ax = ox + s.ax * k;
+      const ay = oy + s.ay * k;
+      const bx = ox + s.bx * k;
+      const by = oy + s.by * k;
+      const len = Math.hypot(bx - ax, by - ay) || 1;
+      const nx = -(by - ay) / len;
+      const ny = (bx - ax) / len;
+      const ra = s.ra * k;
+      const rb = s.rb * k;
+      g.fillPoints([
+        new Phaser.Math.Vector2(ax + nx * ra, ay + ny * ra),
+        new Phaser.Math.Vector2(bx + nx * rb, by + ny * rb),
+        new Phaser.Math.Vector2(bx - nx * rb, by - ny * rb),
+        new Phaser.Math.Vector2(ax - nx * ra, ay - ny * ra),
+      ], true);
+      g.fillCircle(ax, ay, ra);
+      g.fillCircle(bx, by, rb);
+    };
+    // Skóra (obrys) i tkanka.
+    for (const p of BODY_PARTS) for (const s of p.shapes) shape(grow(s, 260), 0xf0a0b0, 0.9);
+    for (const p of BODY_PARTS) for (const s of p.shapes) shape(s, 0x7a2840);
+    // Narządy.
+    for (const o of [...ORGANS].reverse()) for (const s of o.shapes) shape(s, o.color, 0.95);
+    c.add(g);
+
+    // Podpisy.
+    const label = (text: string, x: number, y: number) =>
+      c.add(
+        this.add
+          .text(ox + x * k, oy + y * k, text, { fontFamily: FONT, fontSize: '13px', color: '#ffffff', stroke: '#1c0a10', strokeThickness: 4 })
+          .setOrigin(0.5),
+      );
+    label('Mózg', -16600, 0);
+    label('Serce', -4300, 900);
+    label('Płuca', -5600, -3500);
+    label('Płuca', -5600, 3600);
+    label('Jelita', 5600, 300);
+    label('Ogon', 26000, 4300);
+    label('Łapa', -9500, -12800);
+    label('Łapa', 10200, 13300);
+
+    this.bigMapDots = this.add.graphics();
+    c.add(this.bigMapDots);
+    this.bigMap = c;
+  }
+
+  /** Kropki na dużej mapie: gracz, cel zadania, budowle. */
+  private updateBigMap(): void {
+    const g = this.gs;
+    const dots = this.bigMapDots;
+    if (!dots || !g.player) return;
+    const { ox, oy, k } = this.bigMapView;
+    dots.clear();
+    for (const s of g.structures) dots.fillStyle(STRUCTURES[s.kind].tint, 1).fillRect(ox + s.x * k - 3, oy + s.y * k - 3, 6, 6);
+    const m = g.missionInfo;
+    if (m) dots.fillStyle(m.type === 'defend' ? 0xf472b6 : 0xa78bfa, 1).fillCircle(ox + m.x * k, oy + m.y * k, 5);
+    const pulse = 5 + Math.sin(this.time.now / 160) * 2;
+    dots.lineStyle(2, 0xffffff, 1).strokeCircle(ox + g.player.x * k, oy + g.player.y * k, pulse + 3);
+    dots.fillStyle(0x6ee7b7, 1).fillCircle(ox + g.player.x * k, oy + g.player.y * k, 4);
   }
 
   // ───────────────────────── minimapa ─────────────────────────
@@ -250,7 +390,7 @@ export class UIScene extends Phaser.Scene {
     dots.fillStyle(0xffffff, 1).fillCircle(pp.x, pp.y, 3);
     dots.lineStyle(1, 0x000000, 0.8).strokeCircle(pp.x, pp.y, 3);
 
-    this.biomeText.setText(BIOMES[g.biome].name).setPosition(x0 + S, y0 - 4);
+    this.biomeText.setText(`${g.regionName}  ·  ${keyLabel('map')} — mapa`).setPosition(x0 + S, y0 - 4);
   }
 
   // ───────────────────────── zadanie + strzałka ─────────────────────────
@@ -470,22 +610,43 @@ export class UIScene extends Phaser.Scene {
 
   // ───────────────────────── klawiatura, pauza ─────────────────────────
 
+  /** Podpowiedzi sterowania — z aktualnie przypisanymi klawiszami. */
+  private hintLines(virus: boolean, divideCost: number): string[] {
+    const k = keyLabel;
+    // Ruch: pierwsze klawisze 4 kierunków (np. „WASD”), a drugie — jeśli to strzałki — jako „strzałki”.
+    const dirs = ['up', 'left', 'down', 'right'] as const;
+    const first = dirs.map((d) => keyName(settings.keys[d][0]));
+    const firstText = first.every((n) => n.length === 1) ? first.join('') : first.join(' ');
+    const arrows = dirs.every((d, i) => settings.keys[d][1] === ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'][i]);
+    const move = [settings.mouseFollow ? 'Mysz' : '', firstText, arrows ? 'strzałki' : ''].filter(Boolean).join(' / ');
+    return [
+      virus
+        ? `${move} — ruch  ·  LPM/${k('ability')} — szarża  ·  dotknij komórki — zaraź  ·  ${k('convert')} — przerób komórkę  ·  ${k('pause')} — pauza`
+        : `${move} — ruch  ·  LPM/${k('ability')} — toksyny  ·  PPM/${k('divide')} — podział (${divideCost})  ·  ${k('convert')} — przerób komórkę  ·  ${k('pause')} — pauza`,
+      `Rozkazy (miejsce = kursor):  ${k('orderFollow')} — za mną  ·  ${k('orderAttack')} — atak  ·  ${k('orderHold')} — pozycja  ·  ${k('orderForage')} — ${virus ? 'zarażaj' : 'zbieraj'}   ·   ${k('editor')} — edytor  ·  ${k('map')} — mapa  ·  ${k('sound')} — dźwięk`,
+    ];
+  }
+
   private onKey(e: KeyboardEvent): void {
-    // Edytor komórki ma własną obsługę klawiszy.
-    if (this.scene.isActive('EditorScene')) return;
+    // Edytor komórki i ustawienia mają własną obsługę klawiszy.
+    if (this.scene.isActive('EditorScene') || this.scene.isActive('SettingsScene')) return;
     if (this.overlay) {
       if (e.code === 'KeyR') this.restart();
       else if (e.code === 'KeyM') this.toMenu();
       return;
     }
-    if (e.code === 'Escape' || e.code === 'KeyP') {
+    if (isKey('pause', e.code)) {
       this.togglePause();
       audio.sfx('click');
       return;
     }
-    if (e.code === 'KeyN') {
+    if (isKey('sound', e.code)) {
       this.showToast(`Dźwięk: ${SOUND_MODE_NAMES[audio.cycleMode()]}`);
       audio.sfx('click');
+      return;
+    }
+    if (isKey('map', e.code)) {
+      this.toggleBigMap();
       return;
     }
     if (this.pauseOverlay) {
@@ -515,9 +676,19 @@ export class UIScene extends Phaser.Scene {
     c.add(this.add.text(width / 2, height / 2 - 20, 'Pauza', { fontFamily: FONT, fontSize: '36px', fontStyle: 'bold', color: TEXT }).setOrigin(0.5));
     c.add(
       this.add
-        .text(width / 2, height / 2 + 25, 'Esc — wróć do gry   ·   M — menu', { fontFamily: FONT, fontSize: '16px', color: MUTED })
+        .text(width / 2, height / 2 + 25, `${keyLabel('pause')} — wróć do gry   ·   M — menu`, { fontFamily: FONT, fontSize: '16px', color: MUTED })
         .setOrigin(0.5),
     );
+    const settingsBtn = this.add
+      .text(width / 2, height / 2 + 70, '⚙ Ustawienia', { fontFamily: FONT, fontSize: '17px', color: TEXT, backgroundColor: '#2a1019', padding: { x: 14, y: 7 } })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    settingsBtn.on('pointerdown', () => {
+      audio.sfx('click');
+      this.scene.launch('SettingsScene', { from: 'pause' });
+      this.scene.bringToTop('SettingsScene');
+    });
+    c.add(settingsBtn);
     this.pauseOverlay = c;
   }
 
