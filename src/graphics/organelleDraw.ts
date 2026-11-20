@@ -1,5 +1,42 @@
 import Phaser from 'phaser';
+import { bodyAxes, body } from '../body';
 import { edgePoint, type OrganelleDef, type PlacedOrganelle } from '../organelles';
+
+/** Czułki bakterii (nadane w zakładce „Ciało”): faliste, równo rozmieszczone wokół błony. */
+export function drawFeelers(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, rot: number, t: number): void {
+  const n = body.feelers;
+  if (n <= 0) return;
+  const { ax, ay } = bodyAxes(true);
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  const L = r * 0.75 * body.feelerLen;
+  for (let k = 0; k < n; k++) {
+    // Rozmieszczone równo, z przesunięciem, żeby nie wypadały dokładnie na osi (tam są wici).
+    const a = ((k + 0.5) / n) * Math.PI * 2 + Math.PI / 2;
+    const lx = Math.cos(a) * ax;
+    const ly = Math.sin(a) * ay;
+    const nl = Math.hypot(Math.cos(a) / ax, Math.sin(a) / ay) || 1;
+    const nxl = Math.cos(a) / ax / nl;
+    const nyl = Math.sin(a) / ay / nl;
+    const bx = x + (lx * cos - ly * sin) * r;
+    const by = y + (lx * sin + ly * cos) * r;
+    const nx = nxl * cos - nyl * sin;
+    const ny = nxl * sin + nyl * cos;
+    g.lineStyle(Math.max(1.5, r * 0.07), 0xa7f3d0, 0.85).beginPath();
+    let ex = bx;
+    let ey = by;
+    for (let i = 0; i <= 10; i++) {
+      const s = i / 10;
+      const w = Math.sin(s * 5 - t * 4 + k * 1.3) * r * 0.16 * s;
+      ex = bx + nx * L * s - ny * w;
+      ey = by + ny * L * s + nx * w;
+      if (i === 0) g.moveTo(ex, ey);
+      else g.lineTo(ex, ey);
+    }
+    g.strokePath();
+    g.fillStyle(0xecfdf5, 1).fillCircle(ex, ey, Math.max(1.8, r * 0.06));
+  }
+}
 
 /**
  * Rysuje organella na komórce (w grze i w edytorze).
@@ -22,8 +59,9 @@ export function drawOrganelles(
   const W = (lx: number, ly: number) => ({ x: x + (lx * cos - ly * sin) * r, y: y + (lx * sin + ly * cos) * r });
   /** zewnętrzna normalna błony w punkcie o kącie a (lokalnie) */
   const normal = (a: number) => {
-    const nx = rod ? Math.cos(a) / 1.35 : Math.cos(a);
-    const ny = rod ? Math.sin(a) / 0.75 : Math.sin(a);
+    const { ax, ay } = bodyAxes(rod);
+    const nx = Math.cos(a) / ax;
+    const ny = Math.sin(a) / ay;
     const l = Math.hypot(nx, ny);
     return { x: nx / l, y: ny / l };
   };

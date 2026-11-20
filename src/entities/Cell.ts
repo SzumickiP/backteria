@@ -26,6 +26,8 @@ export class Cell extends Phaser.GameObjects.Image {
   vy = 0;
   /** czujniki ścian: korekta kąta ruchu i czas do ponownego sprawdzenia (rozłożone losowo między komórki) */
   avoidOffset = 0;
+  /** którą stroną omija tłok (1 = prawa, -1 = lewa) */
+  detourSide: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
   avoidTimer = Math.random() * 0.12;
   /** jak długo komórka czeka w pierścieniu wokół celu (otaczanie) */
   surroundTime = 0;
@@ -140,7 +142,37 @@ export class Cell extends Phaser.GameObjects.Image {
     this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, Math.atan2(dy, dx), turnRate * dt);
   }
 
+  /** faza „pływania” (każda komórka porusza wicią we własnym rytmie) */
+  swimPhase = Math.random() * Math.PI * 2;
+
+  /**
+   * Ruch jak u bakterii: napęd wici pulsuje (pływanie szarpane), ciało kołysze się na boki (korkociąg),
+   * a do tego dochodzi drobne drżenie Browna.
+   */
+  swim(dx: number, dy: number, t: number): { x: number; y: number } {
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return { x: dx, y: dy };
+    const ph = this.swimPhase;
+    const thrust = 1 + 0.28 * Math.sin(t * 9 + ph) + 0.1 * Math.sin(t * 3.7 + ph * 2);
+    const side = 0.3 * Math.sin(t * 5.5 + ph * 1.7) + (Math.random() - 0.5) * 0.18;
+    const ux = dx / len;
+    const uy = dy / len;
+    return { x: (ux * thrust - uy * side) * len, y: (uy * thrust + ux * side) * len };
+  }
+
+  /** Rozciągnięcie tekstury (kształt nadany przez gracza); 1 = bez zmian. */
+  setStretch(x: number, y: number): this {
+    this.stretchX = x;
+    this.stretchY = y;
+    this.applyScale();
+    return this;
+  }
+
+  private stretchX = 1;
+  private stretchY = 1;
+
   private applyScale(): void {
-    this.setScale((this._radius / this.texRadius) * this.pulse);
+    const s = (this._radius / this.texRadius) * this.pulse;
+    this.setScale(s * this.stretchX, s * this.stretchY);
   }
 }

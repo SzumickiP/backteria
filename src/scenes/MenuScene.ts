@@ -38,7 +38,7 @@ export class MenuScene extends Phaser.Scene {
     // Wybór zwierzęcia — świat gry to jego wnętrze (układy narządów).
     this.animal = loadAnimal();
     const animY = height * 0.14 + 84;
-    const animDesc = this.add.text(width / 2, animY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8' }).setOrigin(0.5, 0);
+    const animDesc = this.add.text(width / 2, animY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8', align: 'center', wordWrap: { width: Math.min(width - 32, 640) } }).setOrigin(0.5, 0);
     const animBtns = ANIMAL_ORDER.map((id, i) => {
       const b = this.add
         .text(width / 2 + (i - 1) * 120, animY, ANIMALS[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
@@ -64,7 +64,7 @@ export class MenuScene extends Phaser.Scene {
     // Tryb rozgrywki: tempo narastania zagrożenia i liczba wrogów.
     this.mode = loadMode();
     const modeY = animY + 62;
-    const modeDesc = this.add.text(width / 2, modeY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8' }).setOrigin(0.5, 0);
+    const modeDesc = this.add.text(width / 2, modeY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8', align: 'center', wordWrap: { width: Math.min(width - 32, 640) } }).setOrigin(0.5, 0);
     const modeBtns = GAME_MODE_ORDER.map((id, i) => {
       const b = this.add
         .text(width / 2 + (i - 1) * 120, modeY, GAME_MODES[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
@@ -241,22 +241,65 @@ export class MenuScene extends Phaser.Scene {
         .text(width / 2, 18, `Osiągnięcia — ${achievementCount(nick)} / ${ACHIEVEMENTS.length}`, { fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#fde68a' })
         .setOrigin(0.5, 0),
     );
-    const cols = width < 760 ? 1 : 2;
-    const colW = Math.min(360, (width - 48) / cols);
-    const rowH = Math.min(52, (height - 140) / Math.ceil(ACHIEVEMENTS.length / cols));
+    const cols = width < 760 ? 1 : width < 1150 ? 2 : 3;
+    const colW = Math.min(420, (width - 48 - 16 * (cols - 1)) / cols);
+    const rowH = 66;
     const x0 = (width - colW * cols - 16 * (cols - 1)) / 2;
+    const top = 66;
+    const viewH = height - top - 60;
+    // Lista w osobnym kontenerze z maską — przewijana kółkiem lub przeciąganiem, nic nie wychodzi poza ramkę.
+    const list = this.add.container(0, top);
     ACHIEVEMENTS.forEach((a, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const x = x0 + col * (colW + 16);
-      const y = 66 + row * rowH;
+      const y = row * rowH;
       const done = Boolean(got[a.id]);
-      c.add(this.add.rectangle(x, y, colW, rowH - 6, done ? 0x2a1a0c : 0x1c1015, 0.95).setOrigin(0).setStrokeStyle(1, done ? 0xfbbf24 : 0x3a2a30));
-      c.add(
-        this.add.text(x + 10, y + 5, `${done ? '🏆' : '🔒'} ${a.name}`, { fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: done ? '#fde68a' : '#8a7a80' }),
+      list.add(this.add.rectangle(x, y, colW, rowH - 6, done ? 0x2a1a0c : 0x1c1015, 0.95).setOrigin(0).setStrokeStyle(1, done ? 0xfbbf24 : 0x3a2a30));
+      list.add(
+        this.add.text(x + 10, y + 5, `${done ? '🏆' : '🔒'} ${a.name}`, {
+          fontFamily: FONT, fontSize: '14px', fontStyle: 'bold', color: done ? '#fde68a' : '#8a7a80', wordWrap: { width: colW - 20 },
+        }),
       );
-      c.add(this.add.text(x + 10, y + 24, a.description, { fontFamily: FONT, fontSize: '12px', color: done ? '#f5e9ee' : '#6a5a60' }));
+      list.add(
+        this.add.text(x + 10, y + 24, a.description, {
+          fontFamily: FONT, fontSize: '12px', color: done ? '#f5e9ee' : '#8a7a80', wordWrap: { width: colW - 20 }, lineSpacing: 2,
+        }),
+      );
     });
+    c.add(list);
+    const maskG = this.make.graphics({}, false);
+    maskG.fillStyle(0xffffff).fillRect(0, top - 2, width, viewH + 4);
+    list.setMask(maskG.createGeometryMask());
+    const contentH = Math.ceil(ACHIEVEMENTS.length / cols) * rowH;
+    const minY = Math.min(top, top + viewH - contentH);
+    const scrollTo = (y: number) => {
+      list.y = Phaser.Math.Clamp(y, minY, top);
+    };
+    const onWheel = (_p: unknown, _o: unknown, _dx: number, dy: number) => scrollTo(list.y - dy * 0.6);
+    let dragY: number | undefined;
+    const onDown = (p: Phaser.Input.Pointer) => (dragY = p.y);
+    const onMove = (p: Phaser.Input.Pointer) => {
+      if (dragY === undefined || !p.isDown) return (dragY = undefined);
+      scrollTo(list.y + (p.y - dragY));
+      dragY = p.y;
+    };
+    this.input.on('wheel', onWheel);
+    this.input.on('pointerdown', onDown);
+    this.input.on('pointermove', onMove);
+    c.once(Phaser.GameObjects.Events.DESTROY, () => {
+      this.input.off('wheel', onWheel);
+      this.input.off('pointerdown', onDown);
+      this.input.off('pointermove', onMove);
+      maskG.destroy();
+    });
+    if (contentH > viewH) {
+      c.add(
+        this.add
+          .text(width - 16, height - 20, 'przewiń kółkiem ↕', { fontFamily: FONT, fontSize: '12px', color: '#c29aa8' })
+          .setOrigin(1, 1),
+      );
+    }
     const close = this.add
       .text(width / 2, height - 20, 'Zamknij', { fontFamily: FONT, fontSize: '16px', color: '#1c0a10', backgroundColor: '#6ee7b7', padding: { x: 14, y: 6 } })
       .setOrigin(0.5, 1)

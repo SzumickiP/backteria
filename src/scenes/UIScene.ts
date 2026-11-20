@@ -53,6 +53,8 @@ export class UIScene extends Phaser.Scene {
   private rightText!: Phaser.GameObjects.Text;
   private missionText!: Phaser.GameObjects.Text;
   private bossText!: Phaser.GameObjects.Text;
+  /** dolna krawędź tekstu zadania (żeby pasek bossa i plakietki go nie przykrywały) */
+  private missionBottom = 60;
   private arrowText!: Phaser.GameObjects.Text;
   private hint!: Phaser.GameObjects.Text;
   /** podpisy slotów umiejętności: [klawisz, nazwa, czas] × 3 */
@@ -209,6 +211,8 @@ export class UIScene extends Phaser.Scene {
       const [kt, nt, tt] = this.slotTexts[i];
       kt.setText(s.key).setPosition(sx + SW / 2, sy + 13);
       nt.setText(s.name).setPosition(sx + SW / 2, sy + 24).setColor(ready || s.active ? TEXT : MUTED);
+      nt.setScale(Math.min(1, (SW - 8) / Math.max(1, nt.width)));
+      kt.setScale(Math.min(1, (SW - 8) / Math.max(1, kt.width)));
       tt.setText(s.active ? `${s.activeFrac * CLOAK.duration < 0 ? 0 : (s.activeFrac * CLOAK.duration).toFixed(1)} s` : ready ? 'GOTOWE' : s.cd < 10 ? `${s.cd.toFixed(1)} s` : `${Math.ceil(s.cd)} s`)
         .setPosition(sx + SW / 2, sy + SH - 17)
         .setFontSize(ready && !s.active ? 14 : 20)
@@ -263,13 +267,25 @@ export class UIScene extends Phaser.Scene {
     const { width } = this.scale;
     const w = Math.min(380, width - 32);
     const c = this.add.container(width / 2, 70).setDepth(130).setAlpha(0);
-    c.add(this.add.rectangle(0, 0, w, 62, 0x2a1a0c, 0.95).setStrokeStyle(2, 0xfbbf24));
-    c.add(this.add.text(0, -14, `🏆 Osiągnięcie: ${def.name}`, { fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#fde68a' }).setOrigin(0.5));
-    c.add(this.add.text(0, 12, def.description, { fontFamily: FONT, fontSize: '13px', color: TEXT }).setOrigin(0.5));
+    const title = this.add
+      .text(0, 0, `🏆 Osiągnięcie: ${def.name}`, { fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#fde68a', align: 'center', wordWrap: { width: w - 24 } })
+      .setOrigin(0.5, 0);
+    const desc = this.add
+      .text(0, 0, def.description, { fontFamily: FONT, fontSize: '13px', color: TEXT, align: 'center', wordWrap: { width: w - 24 }, lineSpacing: 2 })
+      .setOrigin(0.5, 0);
+    // Ramka dopasowana do wysokości tekstu (opis może mieć kilka linii).
+    const h = title.height + desc.height + 24;
+    // Pod tekstem zadania i paskiem bossa, żeby ich nie przykrywać.
+    const baseY = Math.max(70, this.missionBottom + 56) + h / 2 - 31;
+    c.setY(baseY);
+    title.setY(-h / 2 + 10);
+    desc.setY(-h / 2 + 14 + title.height);
+    c.add(this.add.rectangle(0, 0, w, h, 0x2a1a0c, 0.95).setStrokeStyle(2, 0xfbbf24));
+    c.add([title, desc]);
     this.tweens.add({
       targets: c,
       alpha: 1,
-      y: 80,
+      y: baseY + 10,
       duration: 250,
       hold: 2800,
       yoyo: true,
@@ -522,8 +538,16 @@ export class UIScene extends Phaser.Scene {
   private updateMissionUi(width: number, height: number): void {
     const g = this.gs;
     const m = g.missionInfo;
+    // Miejsce między kolumną statystyk (lewo) a czasem (prawo); gdy ciasno — tekst schodzi pod statystyki.
+    const side = Math.max(this.statsText.width + 16, this.rightText.width + 16) + 12;
+    const free = width - 2 * side;
+    const below = free < 240;
+    const wrapW = below ? width - 32 : Math.min(560, free);
+    const my0 = below ? this.statsText.y + this.statsText.height + 10 : 16;
+    this.missionText.setWordWrapWidth(wrapW, true);
     if (!m) {
-      this.missionText.setText(`Następne zadanie za ${Math.ceil(g.nextMissionIn)} s`).setColor(MUTED).setPosition(width / 2, 16);
+      this.missionText.setText(`Następne zadanie za ${Math.ceil(g.nextMissionIn)} s`).setColor(MUTED).setPosition(width / 2, below ? my0 : 16);
+      this.missionBottom = below ? my0 + this.missionText.height : 16 + this.missionText.height;
       this.arrowText.setVisible(false);
       return;
     }
@@ -531,7 +555,8 @@ export class UIScene extends Phaser.Scene {
     this.missionText
       .setText(`Zadanie: ${m.title} — ${Math.ceil(m.timeLeft)} s\n${m.detail}`)
       .setColor('#fde68a')
-      .setPosition(width / 2, 16);
+      .setPosition(width / 2, my0);
+    this.missionBottom = my0 + this.missionText.height;
 
     // Misja bez miejsca (np. epidemia) — bez strzałki.
     if (m.x === undefined || m.y === undefined) {
@@ -589,7 +614,8 @@ export class UIScene extends Phaser.Scene {
     }
     const w = Math.min(380, width - 40);
     const x = width / 2 - w / 2;
-    const y = 74;
+    const y = Math.max(74, this.missionBottom + 8);
+    this.bossText.setWordWrapWidth(width - 32, true);
     const frac = Phaser.Math.Clamp(b.hp / b.maxHp, 0, 1);
     this.bossText.setVisible(true).setPosition(width / 2, y + 18).setText(
       d < 1100 ? `${b.name} — ${Math.ceil(b.hp)} / ${b.maxHp}` : `${b.name} — ${Math.round(d / 10)} µm stąd (czerwony znacznik na mapie)`,

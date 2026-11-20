@@ -1,3 +1,4 @@
+import { bodyAxes } from './body';
 import type { PlayerStats } from './mutations';
 import type { SpeciesId } from './species';
 
@@ -96,5 +97,6 @@ export function organellesFor(species: SpeciesId): OrganelleDef[] {
  * pałeczka ≈ elipsa 1.35 × 0.75, wirus = koło 0.9.
  */
 export function edgePoint(rod: boolean, angle: number): { x: number; y: number } {
-  return rod ? { x: Math.cos(angle) * 1.35, y: Math.sin(angle) * 0.75 } : { x: Math.cos(angle) * 0.9, y: Math.sin(angle) * 0.9 };
+  const { ax, ay } = bodyAxes(rod); // pałeczka: kształt nadany przez gracza (domyślnie 1.35 × 0.75)
+  return { x: Math.cos(angle) * ax, y: Math.sin(angle) * ay };
 }

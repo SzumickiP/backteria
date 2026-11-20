@@ -190,6 +190,8 @@ function drawTissue(ctx: Ctx, W: number, H: number): void {
       let i1 = 0;
       let o1x = 0;
       let o1y = 0;
+      let b1x = 0;
+      let b1y = 0;
       // Sąsiednie komórki siatki z zawijaniem (kafel bez szwów).
       for (let j = cy - 1; j <= cy + 1; j++) {
         const jj = (j + gh) % gh;
@@ -207,6 +209,8 @@ function drawTissue(ctx: Ctx, W: number, H: number): void {
             i1 = i;
             o1x = ox;
             o1y = oy;
+            b1x = dx;
+            b1y = dy;
           } else if (dd < f2) f2 = dd;
         }
       }
@@ -235,6 +239,20 @@ function drawTissue(ctx: Ctx, W: number, H: number): void {
       r += (112 - r) * mem;
       g += (42 - g) * mem;
       b += (64 - b) * mem;
+
+      // Plastyczność: komórka jak lekko wypukła kopuła oświetlona z lewej góry + cień w szczelinach.
+      const dl = d1 || 1;
+      const dome = ((-b1x / dl) * -0.62 + (-b1y / dl) * -0.78) * Math.min(1, d1 / (cs * 0.5)); // >0 = zwrócone do światła
+      const light = 1 + dome * 0.16;
+      const crease = 1 - 0.28 * (1 - smooth(0, 7, d2 - d1)); // ciemniej tuż przy styku komórek
+      // Delikatne plamistość (bezszwowe sinusy o okresach dzielących rozmiar kafla).
+      const mott = 1 + 0.05 * (Math.sin((x / W) * TAU * 7 + Math.sin((y / H) * TAU * 5) * 1.6) + Math.sin((y / H) * TAU * 9 + Math.sin((x / W) * TAU * 6) * 1.4));
+      const k = light * crease * mott;
+      r *= k;
+      g *= k;
+      b *= k;
+      // Podskórne zaczerwienienie (prześwitujące naczynia) w jaśniejszych miejscach.
+      r += Math.max(0, dome) * 5;
 
       const noise = (rng.frac() - 0.5) * 8;
       const p = (y * W + x) * 4;

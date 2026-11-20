@@ -144,6 +144,16 @@ export const GAME_MODES: Record<GameModeId, { name: string; description: string;
 /** Mnożnik liczby atakujących (0.39 = o 61% mniej niż pierwotnie: niższy limit i rzadszy spawn). */
 export const ENEMY_COUNT_MUL = 0.39;
 
+/** Tłok: gdy wokół jest za dużo komórek, te z tyłu szukają innej drogi (omijają zator bokiem). */
+export const CROWD = {
+  /** ilu sąsiadów w zasięgu uznajemy za tłok */
+  minNeighbors: 5,
+  /** ilu sąsiadów z przodu potrzeba do skrętu */
+  minAhead: 3,
+  /** siła skrętu w bok */
+  detour: 1.4,
+} as const;
+
 /** Wyzwanie „boss”: pojawia się dopiero, gdy gracz jest dość rozwinięty. */
 export const BOSS = {
   /** poziom gracza, od którego pojawia się pierwszy boss */

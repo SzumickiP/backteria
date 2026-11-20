@@ -25,6 +25,7 @@ import {
   PREY_BACTERIA_TARGET,
   PROTEIN,
   RBC_TARGET,
+  CROWD,
   THREAT_PERIOD,
   TOXIN,
 } from '../config';
@@ -38,7 +39,8 @@ import { Organ } from '../entities/Organ';
 import { Prey } from '../entities/Prey';
 import { Structure, type StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
-import { drawOrganelles } from '../graphics/organelleDraw';
+import { drawFeelers, drawOrganelles } from '../graphics/organelleDraw';
+import { applyBody, bodyStretch, body, loadBody } from '../body';
 import { TEX, TEX_RADIUS, createTextures } from '../graphics/textures';
 import { rollMutations, type Mutation, type PlayerStats } from '../mutations';
 import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organelles';
@@ -414,6 +416,9 @@ export class GameScene extends Phaser.Scene {
     const start = z ? findOpenSpot(90, z.x, z.y) : findOpenSpot(90);
     this.player = new Cell(this, start.x, start.y, sp.baseRadius, sp.texture, sp.texRadius, this.stats.maxHp).setDepth(5);
     this.player.setRotation(-Math.PI / 2);
+    // Budowa ciała bakterii nadana w edytorze (kształt, rozmiar, czułki).
+    loadBody();
+    this.applyBodyDesign();
 
     this.createEnvironment();
     this.walls.update(start.x, start.y, this.scale.width / 1.5, this.scale.height / 1.5, Infinity);
@@ -523,6 +528,7 @@ export class GameScene extends Phaser.Scene {
     this.drawFlagella();
     this.organelleGfx.clear();
     const pl = this.player;
+    if (this.species.rod) drawFeelers(this.organelleGfx, pl.x, pl.y, pl.radius, pl.rotation, this.elapsed);
     drawOrganelles(this.organelleGfx, pl.x, pl.y, pl.radius, pl.rotation, this.species.rod, this.organelles, this.organelleDefs, this.elapsed);
     this.drawBars();
 
@@ -593,6 +599,7 @@ export class GameScene extends Phaser.Scene {
     for (const m of this.appliedMutations) m.apply(s);
     const defs = this.organelleDefs;
     for (const o of this.organelles) defs.get(o.id)?.apply(s);
+    if (this.species.rod) applyBody(s);
     // Mniejsze bakterie (kolonia) rosną w siłę wraz z poziomem gracza.
     const allyLevelMul = 1 + 0.06 * Math.max(0, (this.level ?? 1) - 1);
     s.allyMaxHp *= allyLevelMul;
@@ -704,6 +711,15 @@ export class GameScene extends Phaser.Scene {
       d.img.x += d.vx * dt;
       d.img.y += d.vy * dt;
       d.img.rotation += d.spin * dt;
+      // Krwinka niesie tlen: dotknięta przez gracza leczy go i znika (pojawia się nowa na brzegu).
+      if (this.player.isAlive && dist(d.img, this.player) < this.player.radius + 34 * d.img.scaleX * 0.55) {
+        const heal = this.stats.maxHp * 0.06;
+        this.player.hp = Math.min(this.stats.maxHp, this.player.hp + heal);
+        this.floatText(d.img.x, d.img.y, `+${Math.max(1, Math.round(heal))} tlen`, '#fca5a5');
+        const p = this.ringPoint(this.player, ACTIVE_RADIUS * 0.8, ACTIVE_RADIUS);
+        d.img.setPosition(p.x, p.y);
+        continue;
+      }
       if (dist(d.img, this.player) > DESPAWN_RADIUS) {
         const p = this.ringPoint(this.player, ACTIVE_RADIUS * 0.8, ACTIVE_RADIUS);
         d.img.setPosition(p.x, p.y);
@@ -1294,14 +1310,43 @@ export class GameScene extends Phaser.Scene {
       cy += m.y;
     }
     if (n === 0) return { x: 0, y: 0 };
-    if (separationOnly) return { x: sx * 2.4, y: sy * 2.4 };
+    // Tłok: gdy przed nami jest za gęsto, omiń zator bokiem — w stronę, gdzie jest luźniej.
+    let bx = 0;
+    let by = 0;
+    const speedNow = Math.hypot(c.vx, c.vy);
+    if (n >= CROWD.minNeighbors && speedNow > 1) {
+      const hx = c.vx / speedNow;
+      const hy = c.vy / speedNow;
+      let left = 0;
+      let right = 0;
+      for (const m of mates) {
+        if (m === c) continue;
+        const dx = m.x - c.x;
+        const dy = m.y - c.y;
+        if (dx * dx + dy * dy > radius * radius) continue;
+        if (dx * hx + dy * hy < 0) continue; // tylko to, co przed nami
+        if (hx * dy - hy * dx > 0) right++;
+        else left++;
+      }
+      const ahead = left + right;
+      if (ahead >= CROWD.minAhead) {
+        const side = left === right ? c.detourSide : left < right ? -1 : 1;
+        c.detourSide = side as 1 | -1;
+        const k = Math.min(1, ahead / (CROWD.minAhead * 2)) * CROWD.detour;
+        bx = -hy * side * k;
+        by = hx * side * k;
+      }
+    }
+    if (separationOnly) return { x: sx * 2.4 + bx, y: sy * 2.4 + by };
     const al = Math.hypot(ax, ay) || 1;
     cx = cx / n - c.x;
     cy = cy / n - c.y;
     const cl = Math.hypot(cx, cy) || 1;
+    // W tłoku nie skupiamy się jeszcze bardziej w kupę.
+    const cohesion = n >= CROWD.minNeighbors ? 0 : 0.2;
     return {
-      x: sx * 2.4 + (ax / al) * 0.3 + (cx / cl) * 0.2,
-      y: sy * 2.4 + (ay / al) * 0.3 + (cy / cl) * 0.2,
+      x: sx * 2.4 + (ax / al) * 0.3 + (cx / cl) * cohesion + bx,
+      y: sy * 2.4 + (ay / al) * 0.3 + (cy / cl) * cohesion + by,
     };
   }
 
@@ -1336,7 +1381,8 @@ export class GameScene extends Phaser.Scene {
       }
       const ang = desired + c.avoidOffset;
       const step = speed * dt * Math.min(1, l);
-      c.tryMove(Math.cos(ang) * step, Math.sin(ang) * step);
+      const m = c.swim(Math.cos(ang) * step, Math.sin(ang) * step, this.elapsed);
+      c.tryMove(m.x, m.y);
     }
     c.vx = (c.x - x0) / dt;
     c.vy = (c.y - y0) / dt;
@@ -2452,7 +2498,18 @@ export class GameScene extends Phaser.Scene {
 
   private updatePlayerRadius(): void {
     const sp = this.species;
-    this.player.setRadius(Math.min(sp.baseRadius + (this.level - 1) * sp.growthPerLevel, sp.maxRadius));
+    const size = sp.rod ? body.size : 1;
+    this.player.setRadius(Math.min(sp.baseRadius + (this.level - 1) * sp.growthPerLevel, sp.maxRadius) * size);
+  }
+
+  /** Stosuje budowę ciała (rozmiar, kształt, czułki) — wołane przy starcie i po zmianie w edytorze. */
+  applyBodyDesign(): void {
+    if (this.species.rod) {
+      const st = bodyStretch();
+      this.player.setStretch(st.x, st.y);
+    }
+    this.updatePlayerRadius();
+    this.recomputeStats();
   }
 
   private offerMutation(): void {
