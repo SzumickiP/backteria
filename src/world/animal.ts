@@ -53,7 +53,7 @@ export interface OrganRegion {
   label?: [number, number] | null;
 }
 
-export type AnimalId = 'mouse' | 'fish' | 'bird';
+export type AnimalId = 'mouse' | 'fish' | 'bird' | 'human';
 
 export interface AnimalDef {
   id: AnimalId;
@@ -192,8 +192,63 @@ const BIRD: AnimalDef = {
   ],
 };
 
-export const ANIMALS: Record<AnimalId, AnimalDef> = { mouse: MOUSE, fish: FISH, bird: BIRD };
-export const ANIMAL_ORDER: AnimalId[] = ['mouse', 'fish', 'bird'];
+// ───────────────────────── CZŁOWIEK ─────────────────────────
+
+// Człowiek stoi: głowa u góry, ręce opuszczone wzdłuż tułowia, nogi lekko rozstawione.
+const HUMAN_HEART: [number, number] = [3500, -13000];
+const HUMAN: AnimalDef = {
+  id: 'human',
+  name: 'Człowiek',
+  inside: 'Wnętrze człowieka',
+  description: 'Wielka plansza: stojąca postać (głowa u góry), ręce wzdłuż ciała, wszystkie układy narządów.',
+  bounds: { minX: -32000, maxX: 32000, minY: -52000, maxY: 67000 },
+  start: { x: 0, y: -20000 },
+  parts: [
+    { name: 'Głowa', shapes: [E(0, -38000, 7500, 8500), E(0, -45500, 3500, 2800)] },
+    { name: 'Szyja', shapes: [C(0, -31000, 0, -26000, 4200)] },
+    { name: 'Tułów', shapes: [E(0, -3000, 15000, 26000), E(0, 19000, 12000, 7000)] },
+    {
+      name: 'Ręka',
+      shapes: [
+        C(10000, -22000, 19000, -6000, 3800, 3000), C(19000, -6000, 23000, 10000, 3000, 2200), E(24000, 12500, 2100, 2600),
+        C(-10000, -22000, -19000, -6000, 3800, 3000), C(-19000, -6000, -23000, 10000, 3000, 2200), E(-24000, 12500, 2100, 2600),
+      ],
+    },
+    {
+      name: 'Noga',
+      shapes: [
+        C(6500, 19000, 8500, 40000, 5200, 4000), C(8500, 40000, 9500, 58000, 3800, 3000), E(10500, 61000, 2800, 3500),
+        C(-6500, 19000, -8500, 40000, 5200, 4000), C(-8500, 40000, -9500, 58000, 3800, 3000), E(-10500, 61000, 2800, 3500),
+      ],
+    },
+  ],
+  organs: [
+    { name: 'Mózg', system: 'nervous', biome: 'brain', shapes: [E(0, -39500, 4800, 5500)] },
+    { name: 'Rdzeń kręgowy', system: 'nervous', biome: 'brain', channel: true, label: [-7600, -5000], shapes: line([[-3500, -34000], [-5500, -22000], [-6500, -5000], [-6500, 12000], [-4000, 22000], [-1500, 28000]], 900, 600) },
+    { name: 'Serce', system: 'circulatory', biome: 'vessel', shapes: [E(HUMAN_HEART[0], HUMAN_HEART[1], 2700, 3000)] },
+    {
+      name: 'Naczynia krwionośne', system: 'circulatory', biome: 'vessel', channel: true, label: null,
+      shapes: [
+        ...line([HUMAN_HEART, [2500, -6000], [1800, 6000], [1500, 19000]], 900, 750),
+        ...line([[1500, 19000], [6000, 28000], [8300, 45000], [9300, 58000]], 800, 450),
+        ...line([[-1500, 19000], [-6000, 28000], [-8300, 45000], [-9300, 58000]], 800, 450),
+        ...line([HUMAN_HEART, [3000, -22000], [3200, -31000], [4500, -37000]], 800, 600),
+        ...line([[3000, -22000], [2500, -24000], [-3500, -30000], [-4500, -36000]], 700, 550),
+        ...line([[4000, -20000], [9000, -21500], [16000, -14000], [19500, -6000], [22500, 8000]], 800, 500),
+        ...line([[-3000, -20000], [-9000, -21500], [-16000, -14000], [-19500, -6000], [-22500, 8000]], 800, 500),
+      ],
+    },
+    { name: 'Płuca', system: 'respiratory', biome: 'lung', shapes: [E(-10000, -14000, 4500, 6000), E(10000, -14000, 4500, 6000)] },
+    { name: 'Tchawica', system: 'respiratory', biome: 'lung', channel: true, label: [2200, -30000], shapes: [...line([[700, -44000], [600, -28000], [500, -20000]], 700), ...line([[500, -20000], [-9000, -16000]], 600), ...line([[500, -20000], [9000, -16000]], 600)] },
+    { name: 'Przełyk', system: 'digestive', biome: 'gut', channel: true, label: [-2800, -26000], shapes: line([[-1400, -43000], [-1500, -20000], [-1500, -8000], [-1400, 0], [-3500, 3000]], 700) },
+    { name: 'Żołądek', system: 'digestive', biome: 'gut', shapes: [E(-5500, 6000, 3500, 4500)] },
+    { name: 'Wątroba', system: 'digestive', biome: 'gut', shapes: [E(8500, 4000, 4500, 7000)] },
+    { name: 'Jelita', system: 'digestive', biome: 'gut', channel: true, label: [-9500, 16000], shapes: line([[-4000, 10000], [-9000, 16000], [-4000, 20000], [-1000, 12000], [4000, 10000], [8000, 17000], [4000, 21000], [0, 20000]], 1100) },
+  ],
+};
+
+export const ANIMALS: Record<AnimalId, AnimalDef> = { mouse: MOUSE, fish: FISH, bird: BIRD, human: HUMAN };
+export const ANIMAL_ORDER: AnimalId[] = ['mouse', 'fish', 'bird', 'human'];
 
 // ───────────────────────── bieżące zwierzę ─────────────────────────
 

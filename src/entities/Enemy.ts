@@ -23,7 +23,8 @@ export type EnemyKind =
   | 'infectionNest'
   | 'lymphNode'
   | 'virusKing'
-  | 'alphaMacrophage';
+  | 'alphaMacrophage'
+  | 'vaccine';
 
 export interface EnemyDef {
   name: string;
@@ -125,11 +126,16 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     name: 'Alfa-makrofag', radius: 80, hp: 1500, speed: 55, dps: 36, xp: 150, biomass: 0, minThreat: 99,
     texture: TEX.macrophage, texRadius: TEX_RADIUS.leukocyte, burstColor: 0xa5b4fc, motion: 'spin', aggro: 800, boss: true, armor: 0.7,
   },
+  // Boss ze zdarzenia „Szczepionka” — atakuje każdego patogena, więc i bakterię, i wirusa.
+  vaccine: {
+    name: 'Szczepionka', radius: 66, hp: 1300, speed: 60, dps: 34, xp: 160, biomass: 0, minThreat: 99,
+    texture: TEX.leukocyte, texRadius: TEX_RADIUS.leukocyte, burstColor: 0x7dd3fc, motion: 'spin', aggro: 900, boss: true, armor: 0.7,
+  },
 };
 
 /** Wrogowie układu odpornościowego (reszta to patogeny). */
 export function isImmuneKind(k: EnemyKind): boolean {
-  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode' || k === 'alphaMacrophage';
+  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode' || k === 'alphaMacrophage' || k === 'vaccine';
 }
 
 export class Enemy extends Cell {

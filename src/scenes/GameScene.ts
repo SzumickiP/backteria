@@ -239,6 +239,12 @@ export class GameScene extends Phaser.Scene {
   /** ostatni kierunek ruchu — celowanie przy sterowaniu klawiaturą */
   private aim: Point = { x: 0, y: -1 };
   private spawnTimer = 0;
+  /** zdarzenia w organizmie gospodarza: czas do następnego, aktywne (nazwa i czas) oraz ich modyfikatory */
+  private hostEventIn = 40;
+  private hostEventLeft = 0;
+  private hostEventName = '';
+  private evSpeedMul = 1;
+  private evSpawnMul = 1;
   private pendingLevelUps = 0;
   private offerOpen = false;
   private over = false;
@@ -396,6 +402,10 @@ export class GameScene extends Phaser.Scene {
     this.elapsed = 0;
     this.nextMissionAt = FIRST_MISSION_AT;
     this.spawnTimer = 3;
+    this.hostEventIn = 40;
+    this.hostEventLeft = 0;
+    this.evSpeedMul = 1;
+    this.evSpawnMul = 1;
     this.pendingLevelUps = 0;
     this.offerOpen = false;
     this.over = false;
@@ -520,6 +530,7 @@ export class GameScene extends Phaser.Scene {
     this.updateSpawning(dt);
     this.updateMission(dt);
     this.updateBoss(dt);
+    this.updateHostEvents(dt);
     this.updateFriends(dt);
     this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.regen * dt);
     this.updateCamera();
@@ -1408,6 +1419,81 @@ export class GameScene extends Phaser.Scene {
     return target;
   }
 
+  // ───────────────────────── zdarzenia w organizmie ─────────────────────────
+
+  /** Losowe zdarzenia gospodarza (zranienie, gorączka, posiłek, sen, kaszel) — co 45–90 s. */
+  private updateHostEvents(dt: number): void {
+    if (this.hostEventLeft > 0) {
+      this.hostEventLeft -= dt;
+      if (this.hostEventLeft <= 0) {
+        this.evSpeedMul = 1;
+        this.evSpawnMul = 1;
+        this.game.events.emit(GameEvents.Toast, `Koniec: ${this.hostEventName}`);
+      }
+      return;
+    }
+    this.hostEventIn -= dt;
+    if (this.hostEventIn > 0) return;
+    this.hostEventIn = 45 + Math.random() * 45;
+    const toast = (m: string) => this.game.events.emit(GameEvents.Toast, m);
+    const cam = this.cameras.main;
+    const pl = this.player;
+    let kind = Phaser.Math.Between(0, 5);
+    // Szczepionka wymaga doświadczonego gracza i braku innego bossa.
+    if (kind === 5 && (this.boss || this.level < 4)) kind = Phaser.Math.Between(0, 4);
+
+    if (kind === 0) {
+      // Zranienie: odporność mobilizuje się w okolicy, ale rana niesie też trochę tlenu i pożywienia.
+      toast('⚠ Stworzenie się zraniło! Układ odpornościowy rusza do rany');
+      cam.flash(300, 220, 38, 38);
+      cam.shake(350, 0.006);
+      const biome = BIOMES[biomeAt(pl.x, pl.y).a];
+      const pool = (Object.entries(biome.immune) as [EnemyKind, number][]).filter(([k]) => ENEMY_DEFS[k].minThreat <= this.threat);
+      if (pool.length && !inStartZone(pl.x, pl.y)) {
+        for (let i = 0; i < 4; i++) {
+          const p = this.openPoint(pl, 600, 900, 30);
+          if (p) this.spawnEnemy(Phaser.Utils.Array.GetRandom(pool)[0], p);
+        }
+      }
+      for (let i = 0; i < 8; i++) {
+        if (this.isVirus) this.spawnPrey(250);
+        else this.spawnNutrient(150);
+      }
+    } else if (kind === 1) {
+      toast('🌡 Gorączka! Komórki odpornościowe są szybsze (25 s)');
+      this.evSpeedMul = 1.25;
+      this.hostEventName = 'gorączka';
+      this.hostEventLeft = 25;
+    } else if (kind === 2) {
+      toast('🍽 Stworzenie zjadło posiłek — wokół pełno pożywienia');
+      for (let i = 0; i < 16; i++) {
+        if (this.isVirus) this.spawnPrey(250);
+        else this.spawnNutrient(120);
+      }
+    } else if (kind === 3) {
+      toast('😴 Stworzenie śpi — odporność słabnie (30 s)');
+      this.evSpawnMul = 2.5;
+      this.hostEventName = 'sen';
+      this.hostEventLeft = 30;
+    } else if (kind === 5) {
+      const p = this.openPoint(pl, 700, 1100, 80, 20);
+      if (!p) {
+        this.hostEventIn = 5; // brak miejsca — spróbuj niedługo ponownie
+        return;
+      }
+      toast('💉 Stworzenie dostało SZCZEPIONKĘ! Wielki obrońca atakuje każdego patogena');
+      cam.flash(400, 125, 211, 252);
+      this.spawnBoss('vaccine', p);
+    } else {
+      // Kaszel/kichnięcie: wstrząs odrzuca wszystko w jedną stronę.
+      toast('💨 Stworzenie kicha! Wstrząs odrzuca wszystko');
+      cam.shake(500, 0.012);
+      const a = Math.random() * Math.PI * 2;
+      const cells: Cell[] = [pl, ...this.enemies, ...this.allies];
+      for (let s = 0; s < 5; s++) for (const c of cells) c.tryMove(Math.cos(a) * 50, Math.sin(a) * 50);
+    }
+  }
+
   // ───────────────────────── wrogowie ─────────────────────────
 
   private updateSpawning(dt: number): void {
@@ -1419,7 +1505,7 @@ export class GameScene extends Phaser.Scene {
 
     const p = this.openPoint(this.player, 950, 1200, 30);
     if (!p) return; // spróbujemy w następnej klatce
-    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat) * GAME_MODES[this.mode].spawnMul / ENEMY_COUNT_MUL;
+    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat) * GAME_MODES[this.mode].spawnMul * this.evSpawnMul / ENEMY_COUNT_MUL;
     // Strefa zarażona: wrogowie rzadziej i nigdy w samej strefie.
     if (inStartZone(this.player.x, this.player.y)) this.spawnTimer *= START_ZONE.spawnSlowdown;
     if (inStartZone(p.x, p.y)) return;
@@ -1587,7 +1673,7 @@ export class GameScene extends Phaser.Scene {
       const victim = victimOf.get(e);
       let target: Point;
       let stopAt = 0;
-      let speed = e.speed;
+      let speed = e.speed * (isImmuneKind(e.kind) ? this.evSpeedMul : 1);
 
       // Odpuszczający wróg odpływa od gracza; gdy oddali się poza ekran — znika.
       if (this.elapsed < e.giveUpUntil) {
@@ -2060,7 +2146,7 @@ export class GameScene extends Phaser.Scene {
       if (this.bossSummon <= 0 && dist(b, this.player) < 900) {
         this.bossSummon = BOSS.summonEvery;
         const minions = this.enemies.filter((e) => e.guardOf === b).length;
-        const kinds: EnemyKind[] = this.isVirus ? ['antibody', 'leukocyte'] : ['virus', 'germ'];
+        const kinds: EnemyKind[] = this.isVirus || b.kind === 'vaccine' ? ['antibody', 'leukocyte'] : ['virus', 'germ'];
         for (let i = 0; i < 2 && minions + i < BOSS.maxMinions; i++) this.spawnGuard(kinds[Math.random() < 0.7 ? 0 : 1], b);
         this.ringFx(b.x, b.y, b.burstColor, b.radius * 3);
       }
@@ -2072,8 +2158,15 @@ export class GameScene extends Phaser.Scene {
       this.bossRetry = this.elapsed + 3;
       return;
     }
-    const kind: EnemyKind = this.isVirus ? 'alphaMacrophage' : 'virusKing';
+    this.spawnBoss(this.isVirus ? 'alphaMacrophage' : 'virusKing', p);
+  }
+
+  private spawnBoss(kind: EnemyKind, p: Point): void {
     const boss = this.spawnEnemy(kind, p);
+    if (kind === 'vaccine') {
+      boss.baseTint = 0x7dd3fc; // błękitna biała krwinka
+      boss.resetTint();
+    }
     this.boss = boss;
     this.bossSummon = 3;
     this.ringFx(p.x, p.y, boss.burstColor, boss.radius * 4);

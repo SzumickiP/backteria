@@ -41,7 +41,7 @@ export class MenuScene extends Phaser.Scene {
     const animDesc = this.add.text(width / 2, animY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8', align: 'center', wordWrap: { width: Math.min(width - 32, 640) } }).setOrigin(0.5, 0);
     const animBtns = ANIMAL_ORDER.map((id, i) => {
       const b = this.add
-        .text(width / 2 + (i - 1) * 120, animY, ANIMALS[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
+        .text(width / 2 + (i - (ANIMAL_ORDER.length - 1) / 2) * 120, animY, ANIMALS[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
       b.on('pointerdown', () => {
