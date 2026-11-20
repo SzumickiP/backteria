@@ -221,6 +221,9 @@ export class GameScene extends Phaser.Scene {
   /** nawigacja: mapa odległości do gracza (droga naokoło ścian) */
   private nav = new Navigator();
   private flowTimer = 0;
+  private flowCellX = NaN;
+  private flowCellY = NaN;
+  private flowBuiltAt = 0;
 
   private mission?: Mission;
   private nutrients: Nutrient[] = [];
@@ -377,6 +380,9 @@ export class GameScene extends Phaser.Scene {
     this.convertTarget = undefined;
     this.nav = new Navigator();
     this.flowTimer = 0;
+    this.flowCellX = NaN;
+    this.flowCellY = NaN;
+    this.flowBuiltAt = 0;
     this.biome = 'tissue';
     this.regionName = '';
     this.infections = 0;
@@ -522,7 +528,15 @@ export class GameScene extends Phaser.Scene {
     this.flowTimer -= dt;
     if (this.flowTimer <= 0) {
       this.flowTimer = 0.5;
-      this.nav.buildFlow(this.player.x, this.player.y, 1400);
+      const fx = Math.floor(this.player.x / 48);
+      const fy = Math.floor(this.player.y / 48);
+      // Ta sama komórka siatki → mapa nadal aktualna (przeliczamy najwyżej co 2 s).
+      if (fx !== this.flowCellX || fy !== this.flowCellY || this.elapsed - this.flowBuiltAt > 2) {
+        this.flowCellX = fx;
+        this.flowCellY = fy;
+        this.flowBuiltAt = this.elapsed;
+        this.nav.buildFlow(this.player.x, this.player.y, 1400);
+      }
     }
     this.updateAllies(dt);
     this.updateStructures(dt);
@@ -1310,8 +1324,9 @@ export class GameScene extends Phaser.Scene {
       if (m === c) continue;
       const dx = c.x - m.x;
       const dy = c.y - m.y;
-      const d = Math.hypot(dx, dy);
-      if (d > radius || d < 0.01) continue;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > radius * radius || d2 < 0.0001) continue;
+      const d = Math.sqrt(d2);
       n++;
       const personal = (c.radius + m.radius) * 1.7 + 4;
       if (d < personal) {
@@ -1623,13 +1638,20 @@ export class GameScene extends Phaser.Scene {
     // Myślenie gatunku: wrogowie tego samego rodzaju atakujący ten sam cel najpierw go OTACZAJĄ
     // (rozstawiają się po okręgu), a gdy pierścień jest gotowy — uderzają razem ze wszystkich stron.
     const victimOf = new Map<Enemy, Cell>();
+    // Listy frakcji liczone raz na klatkę (zamiast filtrowania całej tablicy dla każdego wroga).
+    const immuneFoes: Enemy[] = [];
+    const pathogenFoes: Enemy[] = [];
+    for (const o of this.enemies) {
+      if (o.hp <= 0 || o.speed < 0) continue;
+      (isImmuneKind(o.kind) ? immuneFoes : pathogenFoes).push(o);
+    }
     const packs = new Map<Cell, Map<EnemyKind, Enemy[]>>();
     for (const e of this.enemies) {
       // Odpuścił — przez chwilę nikogo nie goni.
       if (this.elapsed < e.giveUpUntil) continue;
       let v = this.isPeaceful(e) ? undefined : this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
       // Patogeny i układ odpornościowy walczą ze sobą: bliższy wróg przeciwnej frakcji ma pierwszeństwo.
-      const foe = this.nearest(this.enemies.filter((o) => o !== e && o.hp > 0 && isImmuneKind(o.kind) !== isImmuneKind(e.kind) && o.speed >= 0), e.x, e.y, 260);
+      const foe = this.nearest(isImmuneKind(e.kind) ? pathogenFoes : immuneFoes, e.x, e.y, 260);
       if (foe && (!v || dist(e, foe) < dist(e, v))) v = foe;
       if (!v) continue;
       victimOf.set(e, v);
@@ -1811,6 +1833,15 @@ export class GameScene extends Phaser.Scene {
    * Jako bakteria żyjesz w symbiozie z organizmem: układ odpornościowy Cię nie atakuje (i Ty jego),
    * a zagrażają Ci tylko patogeny. Wyjątki: bossowie oraz cele i strażnicy misji.
    */
+  /** Zaatakowana przez gracza przyjazna komórka od tej chwili atakuje gracza i jego kolonię. */
+  private provoke(e: Enemy): void {
+    e.provoked = true;
+    e.giveUpUntil = 0;
+    e.chaseTime = 0;
+    this.provokedAny = true;
+    this.achieve('provoker');
+  }
+
   private isPeaceful(e: Enemy): boolean {
     if (e.provoked) return false;
     if (this.isVirus) return !isImmuneKind(e.kind);
@@ -1825,16 +1856,17 @@ export class GameScene extends Phaser.Scene {
     const hurtAllies = new Set<Cell>();
     const organ = this.mission?.organ;
 
+    const immuneList: Enemy[] = [];
+    const pathogenList: Enemy[] = [];
+    for (const o of this.enemies) (isImmuneKind(o.kind) ? immuneList : pathogenList).push(o);
+
     for (const e of this.enemies) {
       let hit = false;
       const peaceful = this.isPeaceful(e);
       // Dotykanie przyjaznych komórek jest bezpieczne; dopiero atak (szarża) robi z nich wroga,
       // który od tej chwili atakuje.
       if (peaceful && dashing && dist(e, pl) < pl.radius + e.radius + s.reach) {
-        e.provoked = true;
-        e.giveUpUntil = 0;
-        this.provokedAny = true;
-        this.achieve('provoker');
+        this.provoke(e);
       }
       const dPl = this.isPeaceful(e) ? Infinity : dist(e, pl);
       if (dPl < pl.radius + e.radius + s.reach) {
@@ -1847,8 +1879,12 @@ export class GameScene extends Phaser.Scene {
         playerHurt = true;
         audio.sfx('hurt');
       }
-      for (const o of this.enemies) {
-        if (o !== e && isImmuneKind(o.kind) !== isImmuneKind(e.kind) && dist(e, o) < o.radius + e.radius + 3) {
+      for (const o of isImmuneKind(e.kind) ? pathogenList : immuneList) {
+        const reach = o.radius + e.radius + 3;
+        const ox = e.x - o.x;
+        const oy = e.y - o.y;
+        if (ox > reach || ox < -reach || oy > reach || oy < -reach) continue;
+        if (ox * ox + oy * oy < reach * reach) {
           o.hp -= e.dps * 0.6 * dt;
           hit = true;
         }
@@ -2041,6 +2077,8 @@ export class GameScene extends Phaser.Scene {
         if (v === this.player && dashing) continue; // szarża = nietykalność
         if (p.hostile) v.hp -= p.damage * this.stats.armor;
         else {
+          // Trafiona toksyną (lub pociskiem naszej budowli) przyjazna komórka staje się wrogiem.
+          if (v instanceof Enemy && this.isPeaceful(v)) this.provoke(v);
           v.hurt(p.damage);
           // Liczby obrażeń tylko dla toksyn gracza (bez „szumu” od wieżyczek i narządów).
           if (!p.target) this.floatText(v.x, v.y - v.radius, `-${Math.round(p.damage * v.armorMul)}`, '#d9f99d');
@@ -2670,19 +2708,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Wici: falujące nici z tyłu pałeczek. */
+  /** Czy komórka jest (prawie) na ekranie — poza nim nie ma sensu jej rysować. */
+  private onScreen(c: Cell, margin = 0): boolean {
+    const v = this.cameras.main.worldView;
+    const r = c.radius * 3 + margin;
+    return c.x > v.x - r && c.x < v.right + r && c.y > v.y - r && c.y < v.bottom + r;
+  }
+
   private drawFlagella(): void {
     const g = this.flagella;
     g.clear();
     const t = this.elapsed;
     if (this.species.rod) {
       this.flagellum(g, this.player, COLORS.flagellaPlayer, 3, t, 14);
-      this.allies.forEach((a, i) => this.flagellum(g, a, COLORS.flagellaAlly, 1, t + i, 16));
+      this.allies.forEach((a, i) => this.onScreen(a) && this.flagellum(g, a, COLORS.flagellaAlly, 1, t + i, 16));
     }
     for (const e of this.enemies) {
       const f = e.def.flagella;
-      if (f) this.flagellum(g, e, f.color, f.count, t + e.phase, 8);
+      if (f && this.onScreen(e)) this.flagellum(g, e, f.color, f.count, t + e.phase, 8);
     }
-    for (const b of this.preyBacteria) this.flagellum(g, b, COLORS.flagellaPrey, 1, t, 10);
+    for (const b of this.preyBacteria) if (this.onScreen(b)) this.flagellum(g, b, COLORS.flagellaPrey, 1, t, 10);
 
     // Umysł zbiorowy: delikatne „nici sygnałowe” (quorum sensing) między członkami kolonii.
     const mates: Cell[] = [this.player, ...this.allies];
@@ -2728,6 +2773,7 @@ export class GameScene extends Phaser.Scene {
 
     const bar = (c: Cell, color: number, always = false) => {
       if (!always && c.hp >= c.maxHp) return;
+      if (!this.onScreen(c, 30)) return;
       const w = Math.max(24, c.radius * 2);
       const x = c.x - w / 2;
       const y = c.y - c.radius * 1.4 - 10;
@@ -2848,14 +2894,14 @@ export class GameScene extends Phaser.Scene {
 
   private nearest<T extends Cell>(list: T[], x: number, y: number, maxDist: number, filter?: (t: T) => boolean): T | undefined {
     let best: T | undefined;
-    let bestD = maxDist;
+    let bestD = maxDist * maxDist;
     for (const t of list) {
-      if (!t.isAlive || (filter && !filter(t))) continue;
-      const d = Math.hypot(x - t.x, y - t.y);
-      if (d < bestD) {
-        bestD = d;
-        best = t;
-      }
+      const dx = x - t.x;
+      const dy = y - t.y;
+      const d = dx * dx + dy * dy;
+      if (d >= bestD || !t.isAlive || (filter && !filter(t))) continue;
+      bestD = d;
+      best = t;
     }
     return best;
   }

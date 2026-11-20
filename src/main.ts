@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { showAccountScreen } from './account/AccountScreen';
-import { logout, restoreSession, type Account } from './account/accounts';
+import { logout, type Account } from './account/accounts';
 import { audio } from './audio/AudioEngine';
 import { GameEvents } from './events';
 import { EditorScene } from './scenes/EditorScene';
@@ -47,7 +47,5 @@ function startGame(acc: Account): void {
 // Dźwięk można włączyć dopiero po geście użytkownika (zasada przeglądarek).
 for (const ev of ['pointerdown', 'keydown'] as const) window.addEventListener(ev, () => audio.unlock(), { capture: true });
 
-// Najpierw konto: zapamiętana sesja albo ekran logowania / rejestracji.
-const session = restoreSession();
-if (session) startGame(session);
-else showAccountScreen(startGame);
+// Gra zawsze startuje od ekranu wyboru gracza (bez automatycznego logowania zapamiętaną sesją).
+showAccountScreen(startGame);

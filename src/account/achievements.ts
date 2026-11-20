@@ -45,7 +45,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'vaccine-slayer', name: 'Przeciw szczepionce', description: 'Pokonaj bossa Szczepionkę (losowe zdarzenie od 4. poziomu)' },
   { id: 'events5', name: 'Bywalec zdarzeń', description: 'Przeżyj 5 zdarzeń w organizmie (zranienie, gorączka, posiłek, sen, kichnięcie, szczepionka)' },
   { id: 'symbiont', name: 'Symbionta', description: 'Jako bakteria przetrwaj 5 minut, nie atakując przyjaznych komórek odporności' },
-  { id: 'provoker', name: 'Prowokator', description: 'Zaatakuj szarżą przyjazną komórkę, żeby stała się wrogiem' },
+  { id: 'provoker', name: 'Prowokator', description: 'Zaatakuj szarżą lub toksyną przyjazną komórkę, żeby stała się wrogiem' },
 ];
 
 export function hasAchievement(nick: string, id: string): boolean {
