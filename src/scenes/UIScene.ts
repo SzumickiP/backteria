@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { AchievementDef } from '../account/achievements';
 import { recordResult } from '../account/accounts';
 import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
-import { CONVERT, STRUCTURES } from '../config';
+import { CLOAK, CONVERT, STRUCTURES } from '../config';
 import type { StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
 import type { Mutation } from '../mutations';
@@ -52,6 +52,8 @@ export class UIScene extends Phaser.Scene {
   private missionText!: Phaser.GameObjects.Text;
   private arrowText!: Phaser.GameObjects.Text;
   private hint!: Phaser.GameObjects.Text;
+  /** podpisy slotów umiejętności: [klawisz, nazwa, czas] × 3 */
+  private slotTexts: Phaser.GameObjects.Text[][] = [];
   private banner!: Phaser.GameObjects.Text;
   private toast!: Phaser.GameObjects.Text;
   private mutationPanel?: Phaser.GameObjects.Container;
@@ -88,6 +90,11 @@ export class UIScene extends Phaser.Scene {
     this.missionText = this.add.text(0, 16, '', { ...base, fontSize: '16px', align: 'center', lineSpacing: 6 }).setOrigin(0.5, 0);
     this.arrowText = this.add.text(0, 0, '', { ...base, fontSize: '12px', color: '#fde68a' }).setOrigin(0.5);
     this.hint = this.add.text(16, 0, '', { ...base, fontSize: '13px', color: MUTED }).setOrigin(0, 1);
+    this.slotTexts = [0, 1, 2].map(() => [
+      this.add.text(0, 0, '', { ...base, fontSize: '13px', fontStyle: 'bold', color: '#fde68a' }).setOrigin(0.5),
+      this.add.text(0, 0, '', { ...base, fontSize: '12px', color: TEXT }).setOrigin(0.5, 0),
+      this.add.text(0, 0, '', { ...base, fontSize: '20px', fontStyle: 'bold', color: '#ffffff' }).setOrigin(0.5),
+    ]);
     this.banner = this.add
       .text(0, 0, '', { fontFamily: FONT, fontSize: '34px', fontStyle: 'bold', color: TEXT, align: 'center', stroke: '#1c0a10', strokeThickness: 6 })
       .setOrigin(0.5)
@@ -164,17 +171,45 @@ export class UIScene extends Phaser.Scene {
       const here = c.here ? ` · ${c.here.name}: ${c.here.conquered ? 'podbity ✓' : `${c.here.progress}/${c.here.goal}`}` : '';
       lines.push(`Podbój organizmu ${c.done}/${c.total}${here}`);
     }
-    lines.push(`Maskowanie (${keyLabel('cloak')}): ${g.cloaked ? `aktywne ${g.cloakTime.toFixed(1)} s` : g.cloakCd > 0 ? `${Math.ceil(g.cloakCd)} s` : 'gotowe'}`);
-    lines.push(`Budowle ${g.structures.length}/${CONVERT.maxStructures} · przeróbka (E): ${g.convertCd > 0 ? `${Math.ceil(g.convertCd)} s` : 'gotowa'}`);
-    lines.push(`${g.species.abilityName} (LPM/F): ${g.abilityCd > 0 ? `${g.abilityCd.toFixed(1)} s` : 'gotowe'}`);
+    lines.push(`Budowle ${g.structures.length}/${CONVERT.maxStructures}`);
     this.statsText.setText(lines);
 
-    // Pasek odnowienia ataku specjalnego (pod tekstem).
-    const abY = this.statsText.y + this.statsText.height + 4;
-    const cdFrac = 1 - Phaser.Math.Clamp(g.abilityCd / g.stats.abilityCooldown, 0, 1);
-    this.hud.fillStyle(0x000000, 0.55).fillRoundedRect(16, abY, 120, 6, 3);
-    if (cdFrac > 0.02) this.hud.fillStyle(cdFrac >= 1 ? 0xbef264 : 0x6b7280, 1).fillRoundedRect(16, abY, Math.max(6, 120 * cdFrac), 6, 3);
-    this.hud.lineStyle(1, 0xf5e9ee, 0.3).strokeRoundedRect(16, abY, 120, 6, 3);
+    // Duże sloty umiejętności w lewym dolnym rogu: klawisz, nazwa, odliczanie i wypełnienie.
+    const slots = [
+      {
+        key: 'LPM/' + keyLabel('ability'), name: g.species.abilityName,
+        cd: g.abilityCd, max: g.stats.abilityCooldown, active: false, activeFrac: 0, color: 0xbef264,
+      },
+      {
+        key: keyLabel('cloak'), name: 'Maskowanie',
+        cd: g.cloakCd, max: CLOAK.cooldown, active: g.cloaked, activeFrac: g.cloakTime / CLOAK.duration, color: 0x67e8f9,
+      },
+      {
+        key: keyLabel('convert'), name: 'Przeróbka',
+        cd: g.convertCd, max: CONVERT.cooldown, active: false, activeFrac: 0, color: 0xf0abfc,
+      },
+    ];
+    const SW = 86, SH = 64, GAP = 10;
+    const sy = height - 44 - SH;
+    slots.forEach((s, i) => {
+      const sx = 16 + i * (SW + GAP);
+      const ready = s.cd <= 0;
+      const frac = s.active ? Phaser.Math.Clamp(s.activeFrac, 0, 1) : 1 - Phaser.Math.Clamp(s.cd / s.max, 0, 1);
+      this.hud.fillStyle(0x12060a, 0.82).fillRoundedRect(sx, sy, SW, SH, 8);
+      // wypełnienie od dołu
+      const fh = Math.max(0, (SH - 4) * frac);
+      this.hud.fillStyle(s.color, s.active ? 0.55 : ready ? 0.4 : 0.2).fillRoundedRect(sx + 2, sy + SH - 2 - fh, SW - 4, fh, 6);
+      const glow = ready || s.active ? 0.6 + 0.4 * Math.sin(this.time.now / 220) : 0;
+      this.hud.lineStyle(ready || s.active ? 3 : 1.5, ready || s.active ? s.color : 0xf5e9ee, ready || s.active ? 0.6 + 0.4 * glow : 0.35)
+        .strokeRoundedRect(sx, sy, SW, SH, 8);
+      const [kt, nt, tt] = this.slotTexts[i];
+      kt.setText(s.key).setPosition(sx + SW / 2, sy + 13);
+      nt.setText(s.name).setPosition(sx + SW / 2, sy + 24).setColor(ready || s.active ? TEXT : MUTED);
+      tt.setText(s.active ? `${s.activeFrac * CLOAK.duration < 0 ? 0 : (s.activeFrac * CLOAK.duration).toFixed(1)} s` : ready ? 'GOTOWE' : s.cd < 10 ? `${s.cd.toFixed(1)} s` : `${Math.ceil(s.cd)} s`)
+        .setPosition(sx + SW / 2, sy + SH - 17)
+        .setFontSize(ready && !s.active ? 14 : 20)
+        .setColor(s.active ? '#a5f3fc' : ready ? '#d9f99d' : '#ffffff');
+    });
 
     this.rightText
       .setText([`Czas ${formatTime(g.elapsed)}`, `Zagrożenie ${Math.floor(g.threat)}`, `Zabici ${g.kills}`, `Zadania ${g.missionsDone}`])

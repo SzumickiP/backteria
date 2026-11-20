@@ -114,6 +114,11 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
   },
 };
 
+/** Wrogowie układu odpornościowego (reszta to patogeny). */
+export function isImmuneKind(k: EnemyKind): boolean {
+  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode';
+}
+
 export class Enemy extends Cell {
   readonly kind: EnemyKind;
   readonly def: EnemyDef;

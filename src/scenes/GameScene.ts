@@ -28,7 +28,7 @@ import { unlockAchievement } from '../account/achievements';
 import { updateAccount } from '../account/accounts';
 import { audio } from '../audio/AudioEngine';
 import { Cell } from '../entities/Cell';
-import { ENEMY_DEFS, Enemy, type EnemyKind } from '../entities/Enemy';
+import { ENEMY_DEFS, Enemy, isImmuneKind, type EnemyKind } from '../entities/Enemy';
 import { Nutrient } from '../entities/Nutrient';
 import { Organ } from '../entities/Organ';
 import { Prey } from '../entities/Prey';
@@ -557,6 +557,10 @@ export class GameScene extends Phaser.Scene {
     for (const m of this.appliedMutations) m.apply(s);
     const defs = this.organelleDefs;
     for (const o of this.organelles) defs.get(o.id)?.apply(s);
+    // Mniejsze bakterie (kolonia) rosną w siłę wraz z poziomem gracza.
+    const allyLevelMul = 1 + 0.06 * Math.max(0, (this.level ?? 1) - 1);
+    s.allyMaxHp *= allyLevelMul;
+    s.allyDamage *= allyLevelMul;
     this.stats = s;
 
     this.player.maxHp = s.maxHp;
@@ -1331,7 +1335,9 @@ export class GameScene extends Phaser.Scene {
 
     // Rodzaj wroga zależy od biomu, w którym jest gracz.
     const biome = BIOMES[biomeAt(p.x, p.y).a];
-    const weights = this.isVirus ? biome.immune : biome.enemies;
+    // Wirusa atakuje tylko układ odpornościowy; bakterię — patogeny i organizm (układ odpornościowy).
+    const weights: Partial<Record<EnemyKind, number>> = { ...biome.immune };
+    if (!this.isVirus) for (const [k, w] of Object.entries(biome.enemies) as [EnemyKind, number][]) weights[k] = (weights[k] ?? 0) + w;
     const pool = (Object.entries(weights) as [EnemyKind, number][]).filter(([k]) => ENEMY_DEFS[k].minThreat <= t);
     const total = pool.reduce((s, [, w]) => s + w, 0);
     let r = Math.random() * total;
@@ -1430,7 +1436,10 @@ export class GameScene extends Phaser.Scene {
     for (const e of this.enemies) {
       // Odpuścił — przez chwilę nikogo nie goni.
       if (this.elapsed < e.giveUpUntil) continue;
-      const v = this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
+      let v = this.isPeaceful(e) ? undefined : this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
+      // Patogeny i układ odpornościowy walczą ze sobą: bliższy wróg przeciwnej frakcji ma pierwszeństwo.
+      const foe = this.nearest(this.enemies.filter((o) => o !== e && o.hp > 0 && isImmuneKind(o.kind) !== isImmuneKind(e.kind) && o.speed >= 0), e.x, e.y, 260);
+      if (foe && (!v || dist(e, foe) < dist(e, v))) v = foe;
       if (!v) continue;
       victimOf.set(e, v);
       // Długi pościg bez dosięgnięcia ofiary → wróg odpuszcza.
@@ -1602,6 +1611,11 @@ export class GameScene extends Phaser.Scene {
 
   // ───────────────────────── walka i infekcja ─────────────────────────
 
+  /** Jako wirus nie atakują Cię inne patogeny (wirusy, bakterie) — walczą tylko z układem odpornościowym. */
+  private isPeaceful(e: Enemy): boolean {
+    return this.isVirus && !isImmuneKind(e.kind);
+  }
+
   private resolveCombat(dt: number): void {
     const pl = this.player;
     const s = this.stats;
@@ -1612,7 +1626,8 @@ export class GameScene extends Phaser.Scene {
 
     for (const e of this.enemies) {
       let hit = false;
-      const dPl = dist(e, pl);
+      const peaceful = this.isPeaceful(e);
+      const dPl = peaceful ? Infinity : dist(e, pl);
       if (dPl < pl.radius + e.radius + s.reach) {
         e.hurt(s.damage * dt);
         hit = true;
@@ -1623,7 +1638,13 @@ export class GameScene extends Phaser.Scene {
         playerHurt = true;
         audio.sfx('hurt');
       }
-      for (const a of this.allies) {
+      for (const o of this.enemies) {
+        if (o !== e && isImmuneKind(o.kind) !== isImmuneKind(e.kind) && dist(e, o) < o.radius + e.radius + 3) {
+          o.hp -= e.dps * 0.6 * dt;
+          hit = true;
+        }
+      }
+      for (const a of peaceful ? [] : this.allies) {
         if (dist(e, a) < a.radius + e.radius + 3) {
           e.hurt(s.allyDamage * a.damageMul * dt);
           a.hp -= e.dps * s.armor * dt;
@@ -1634,7 +1655,7 @@ export class GameScene extends Phaser.Scene {
       if (organ?.isAlive && e.missionTarget === organ && dist(e, organ) < organ.radius + e.radius + 2) {
         organ.hp -= e.dps * dt;
       }
-      for (const st of this.structures) {
+      for (const st of peaceful ? [] : this.structures) {
         if (dist(e, st) < st.radius + e.radius + 2) {
           st.hp -= e.dps * dt;
           st.setTint(COLORS.hurt);
@@ -2024,6 +2045,15 @@ export class GameScene extends Phaser.Scene {
           this.dna += 1;
           this.achieve('nest-buster');
           detail = `Gniazdo zniszczone! Nagroda: doświadczenie i +${DNA.perMission + 1} DNA`;
+          if (this.isVirus) {
+            // Wirus po pokonaniu węzła chłonnego zaraża okolicę: kopie i duży postęp podboju.
+            const nx = m.nest?.x ?? this.player.x;
+            const ny = m.nest?.y ?? this.player.y;
+            this.burst(nx, ny, COLORS.burstCopy, 24);
+            this.releaseCopies(nx, ny, 5);
+            this.addConquest(biomeAt(nx, ny).name, 3);
+            detail += ', zarażenie okolicy i nowe kopie';
+          }
           break;
         case 'collect':
           this.biomass += 25;
@@ -2213,6 +2243,8 @@ export class GameScene extends Phaser.Scene {
         this.game.events.emit(GameEvents.Toast, '+1 DNA — V: zbuduj komórkę');
       }
       this.updatePlayerRadius();
+      this.recomputeStats();
+      for (const a of this.allies) this.ringFx(a.x, a.y, 0xfde68a, a.radius * 3);
     }
   }
 
