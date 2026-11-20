@@ -242,6 +242,9 @@ export class GameScene extends Phaser.Scene {
   /** zdarzenia w organizmie gospodarza: czas do następnego, aktywne (nazwa i czas) oraz ich modyfikatory */
   private hostEventIn = 40;
   private hostEventLeft = 0;
+  private hostEventsSeen = 0;
+  /** czy w tej grze zaatakowano przyjazną komórkę */
+  private provokedAny = false;
   private hostEventName = '';
   private evSpeedMul = 1;
   private evSpawnMul = 1;
@@ -404,6 +407,8 @@ export class GameScene extends Phaser.Scene {
     this.spawnTimer = 3;
     this.hostEventIn = 40;
     this.hostEventLeft = 0;
+    this.hostEventsSeen = 0;
+    this.provokedAny = false;
     this.evSpeedMul = 1;
     this.evSpawnMul = 1;
     this.pendingLevelUps = 0;
@@ -1174,8 +1179,7 @@ export class GameScene extends Phaser.Scene {
     let focus: Cell | undefined;
     switch (this.order) {
       case 'follow':
-        focus = this.nearest(targets, p.x, p.y, 340);
-        break;
+        break; // kolonia nie atakuje z własnej inicjatywy — tylko na rozkaz
       case 'attack':
         focus = this.orderTarget ?? this.nearest(targets, op.x, op.y, 300);
         break;
@@ -1183,8 +1187,7 @@ export class GameScene extends Phaser.Scene {
         focus = this.nearest(targets, op.x, op.y, 200);
         break;
       case 'forage':
-        focus = this.nearest(this.enemies, p.x, p.y, 160); // obrona tylko przed bliskim zagrożeniem
-        break;
+        break; // zbiera pożywienie, nie atakuje
     }
     const mates: Cell[] = [p, ...this.allies];
     const back = Math.atan2(-this.aim.y, -this.aim.x);
@@ -1435,6 +1438,7 @@ export class GameScene extends Phaser.Scene {
     this.hostEventIn -= dt;
     if (this.hostEventIn > 0) return;
     this.hostEventIn = 45 + Math.random() * 45;
+    if (++this.hostEventsSeen >= 5) this.achieve('events5');
     const toast = (m: string) => this.game.events.emit(GameEvents.Toast, m);
     const cam = this.cameras.main;
     const pl = this.player;
@@ -1549,6 +1553,11 @@ export class GameScene extends Phaser.Scene {
     if (this.elapsed >= 300) this.achieve('survivor5');
     if (this.elapsed >= 300 && this.mode === 'hard') this.achieve('hard-mode');
     if (this.dna >= 10) this.achieve('dna10');
+    if (this.animal === 'human') {
+      if (this.elapsed >= 180) this.achieve('human-host');
+      if (partAt(this.player.x, this.player.y) === 'Głowa') this.achieve('head-trip');
+    }
+    if (!this.isVirus && !this.provokedAny && this.elapsed >= 300) this.achieve('symbiont');
 
     // Miejsce w ciele myszy (narząd / część ciała) i jego biom.
     const r = biomeAt(this.player.x, this.player.y);
@@ -1796,9 +1805,15 @@ export class GameScene extends Phaser.Scene {
 
   // ───────────────────────── walka i infekcja ─────────────────────────
 
-  /** Jako wirus nie atakują Cię inne patogeny (wirusy, bakterie) — walczą tylko z układem odpornościowym. */
+  /**
+   * Jako wirus nie atakują Cię inne patogeny (wirusy, bakterie) — walczą tylko z układem odpornościowym.
+   * Jako bakteria żyjesz w symbiozie z organizmem: układ odpornościowy Cię nie atakuje (i Ty jego),
+   * a zagrażają Ci tylko patogeny. Wyjątki: bossowie oraz cele i strażnicy misji.
+   */
   private isPeaceful(e: Enemy): boolean {
-    return this.isVirus && !isImmuneKind(e.kind);
+    if (e.provoked) return false;
+    if (this.isVirus) return !isImmuneKind(e.kind);
+    return isImmuneKind(e.kind) && !e.def.boss && !e.missionTarget && !e.guardOf;
   }
 
   private resolveCombat(dt: number): void {
@@ -1812,7 +1827,15 @@ export class GameScene extends Phaser.Scene {
     for (const e of this.enemies) {
       let hit = false;
       const peaceful = this.isPeaceful(e);
-      const dPl = peaceful ? Infinity : dist(e, pl);
+      // Dotykanie przyjaznych komórek jest bezpieczne; dopiero atak (szarża) robi z nich wroga,
+      // który od tej chwili atakuje.
+      if (peaceful && dashing && dist(e, pl) < pl.radius + e.radius + s.reach) {
+        e.provoked = true;
+        e.giveUpUntil = 0;
+        this.provokedAny = true;
+        this.achieve('provoker');
+      }
+      const dPl = this.isPeaceful(e) ? Infinity : dist(e, pl);
       if (dPl < pl.radius + e.radius + s.reach) {
         e.hurt(s.damage * dt);
         hit = true;
@@ -2180,6 +2203,7 @@ export class GameScene extends Phaser.Scene {
     this.bossLevel = this.level + BOSS.levelStep;
     this.dna += BOSS.dna;
     this.achieve('boss-slayer');
+    if (b.kind === 'vaccine') this.achieve('vaccine-slayer');
     this.bossLevelAchievements();
     this.deadBoss = b; // sługi znikną w updateBoss (tu trwa filtrowanie listy wrogów)
     for (let i = 0; i < 4; i++) {

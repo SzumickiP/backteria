@@ -155,6 +155,8 @@ export class Enemy extends Cell {
   chaseTime = 0;
   /** do kiedy (czas gry) wróg „odpuścił” i odpływa */
   giveUpUntil = 0;
+  /** zaatakowany przez gracza (jako bakterię) — przyjazna komórka odporności staje się wrogiem */
+  provoked = false;
   /** zadanie „obroń narząd”: ten wróg atakuje narząd */
   missionTarget?: Organ;
   /** zadanie: ten wróg pilnuje narządu / gniazda */

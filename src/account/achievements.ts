@@ -40,6 +40,12 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'boss-slayer', name: 'Pogromca bossa', description: 'Pokonaj bossa (pojawia się od 8. poziomu, w losowym miejscu mapy — szukaj czerwonego znacznika)' },
   { id: 'boss-hard', name: 'Legenda', description: 'Pokonaj bossa w trybie Trudnym' },
   { id: 'dna10', name: 'Kolekcjoner DNA', description: 'Zgromadź naraz 10 DNA (nagrody za zadania i poziomy)' },
+  { id: 'human-host', name: 'Gość w człowieku', description: 'Zagraj na planszy Człowiek (wybierz ją w menu) i przetrwaj tam 3 minuty' },
+  { id: 'head-trip', name: 'Od stóp do głów', description: 'Na planszy Człowiek dotrzyj do głowy' },
+  { id: 'vaccine-slayer', name: 'Przeciw szczepionce', description: 'Pokonaj bossa Szczepionkę (losowe zdarzenie od 4. poziomu)' },
+  { id: 'events5', name: 'Bywalec zdarzeń', description: 'Przeżyj 5 zdarzeń w organizmie (zranienie, gorączka, posiłek, sen, kichnięcie, szczepionka)' },
+  { id: 'symbiont', name: 'Symbionta', description: 'Jako bakteria przetrwaj 5 minut, nie atakując przyjaznych komórek odporności' },
+  { id: 'provoker', name: 'Prowokator', description: 'Zaatakuj szarżą przyjazną komórkę, żeby stała się wrogiem' },
 ];
 
 export function hasAchievement(nick: string, id: string): boolean {
