@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { ACHIEVEMENTS, achievementCount } from '../account/achievements';
-import { getAccount } from '../account/accounts';
+import { getAccount, listAccounts } from '../account/accounts';
 import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
 import { CHUNK } from '../config';
 import { isKey, keyLabel } from '../settings';
@@ -175,6 +175,16 @@ export class MenuScene extends Phaser.Scene {
         this.showAchievements(nick);
       });
     }
+    // Tabela wyników / postępu wszystkich kont na tym urządzeniu.
+    const scoreBtn = this.add
+      .text(16, 88, '📊 Tabela wyników', {
+        fontFamily: FONT, fontSize: '15px', color: '#93c5fd', backgroundColor: '#2a1019', padding: { x: 10, y: 6 },
+      })
+      .setInteractive({ useHandCursor: true });
+    scoreBtn.on('pointerdown', () => {
+      audio.sfx('click');
+      this.showScores(nick);
+    });
     this.input.keyboard!.on('keydown', onKey);
     const onResize = () => this.scene.restart();
     this.scale.on('resize', onResize);
@@ -221,6 +231,52 @@ export class MenuScene extends Phaser.Scene {
       );
       c.add(this.add.text(x + 10, y + 24, a.description, { fontFamily: FONT, fontSize: '12px', color: done ? '#f5e9ee' : '#6a5a60' }));
     });
+    const close = this.add
+      .text(width / 2, height - 20, 'Zamknij', { fontFamily: FONT, fontSize: '16px', color: '#1c0a10', backgroundColor: '#6ee7b7', padding: { x: 14, y: 6 } })
+      .setOrigin(0.5, 1)
+      .setInteractive({ useHandCursor: true });
+    close.on('pointerdown', () => {
+      audio.sfx('click');
+      this.achPanel?.destroy();
+      this.achPanel = undefined;
+    });
+    c.add(close);
+    this.achPanel = c;
+  }
+
+  /** Tabela wyników: wszystkie konta z tego urządzenia, posortowane po najlepszym czasie przetrwania. */
+  private showScores(me?: string): void {
+    this.achPanel?.destroy();
+    const { width, height } = this.scale;
+    const c = this.add.container(0, 0).setDepth(100);
+    c.add(this.add.rectangle(0, 0, width, height, 0x0d0408, 0.93).setOrigin(0).setInteractive());
+    c.add(
+      this.add
+        .text(width / 2, 18, 'Tabela wyników i postępu', { fontFamily: FONT, fontSize: '26px', fontStyle: 'bold', color: '#93c5fd' })
+        .setOrigin(0.5, 0),
+    );
+    const fmt = (b?: { time: number; level: number }) =>
+      b ? `${Math.floor(b.time / 60)}:${String(Math.floor(b.time % 60)).padStart(2, '0')} · p.${b.level}` : '—';
+    const bestTime = (a: ReturnType<typeof listAccounts>[number]) => Math.max(0, ...Object.values(a.best).map((b) => b?.time ?? 0));
+    const rows = listAccounts().sort((a, b) => bestTime(b) - bestTime(a));
+
+    const tableW = Math.min(width - 24, 760);
+    const x0 = (width - tableW) / 2;
+    const cols = [0, 0.07, 0.32, 0.43, 0.65, 0.87].map((f) => x0 + f * tableW);
+    const head = ['#', 'Gracz', 'Gry', 'Bakteria (rekord)', 'Wirus (rekord)', '🏆'];
+    const style = { fontFamily: FONT, fontSize: width < 600 ? '11px' : '14px' };
+    head.forEach((h, i) => c.add(this.add.text(cols[i], 70, h, { ...style, fontStyle: 'bold', color: '#c29aa8' })));
+    const rowH = Math.min(30, (height - 170) / Math.max(1, rows.length));
+    rows.forEach((a, i) => {
+      const y = 100 + i * rowH;
+      const mine = me !== undefined && a.nick.toLowerCase() === me.toLowerCase();
+      if (mine) c.add(this.add.rectangle(x0 - 6, y - 3, tableW + 12, rowH - 2, 0x1f3b33, 0.9).setOrigin(0));
+      const color = mine ? '#6ee7b7' : '#f5e9ee';
+      const cells = [String(i + 1), a.nick, String(a.games), fmt(a.best.bacterium), fmt(a.best.virus), `${Object.keys(a.achievements ?? {}).length}/${ACHIEVEMENTS.length}`];
+      cells.forEach((t, k) => c.add(this.add.text(cols[k], y, t, { ...style, color })));
+    });
+    if (rows.length === 0) c.add(this.add.text(width / 2, 110, 'Brak kont.', { ...style, color: '#c29aa8' }).setOrigin(0.5, 0));
+
     const close = this.add
       .text(width / 2, height - 20, 'Zamknij', { fontFamily: FONT, fontSize: '16px', color: '#1c0a10', backgroundColor: '#6ee7b7', padding: { x: 14, y: 6 } })
       .setOrigin(0.5, 1)

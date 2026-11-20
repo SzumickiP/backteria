@@ -2,9 +2,8 @@ import type { GameSummary } from '../events';
 import type { SpeciesId } from '../species';
 
 /**
- * Konta graczy zapisywane LOKALNIE w przeglądarce (localStorage).
- * Hasło nie jest przechowywane wprost — tylko skrót SHA-256 z losową solą.
- * Uwaga: to nie jest zabezpieczenie na poziomie serwera; konta działają tylko na tym urządzeniu.
+ * Konta graczy zapisywane LOKALNIE w przeglądarce (localStorage). Bez hasła — wystarczy nick.
+ * Konta działają tylko na tym urządzeniu.
  */
 
 export interface BestResult {
@@ -16,8 +15,9 @@ export interface BestResult {
 
 export interface Account {
   nick: string;
-  salt: string;
-  hash: string;
+  /** pola ze starych kont z hasłem — już nieużywane */
+  salt?: string;
+  hash?: string;
   created: number;
   games: number;
   best: Partial<Record<SpeciesId, BestResult>>;
@@ -40,7 +40,6 @@ const ACCOUNTS_KEY = 'backteria.accounts';
 const SESSION_KEY = 'backteria.session';
 
 export const NICK_RULES = 'Nick: 3–16 znaków (litery, cyfry, _).';
-export const PASSWORD_RULES = 'Hasło: co najmniej 6 znaków.';
 
 function load(): Record<string, Account> {
   try {
@@ -61,24 +60,6 @@ function save(all: Record<string, Account>): boolean {
 
 const keyOf = (nick: string) => nick.trim().toLowerCase();
 
-function randomSalt(): string {
-  const a = new Uint8Array(16);
-  crypto.getRandomValues(a);
-  return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function hashPassword(password: string, salt: string): Promise<string> {
-  const data = new TextEncoder().encode(`${salt}:${password}`);
-  if (crypto.subtle) {
-    const buf = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  // Brak WebCrypto (np. strona otwarta z pliku) — prosty skrót zastępczy.
-  let h = 2166136261;
-  for (const b of data) h = Math.imul(h ^ b, 16777619);
-  return `fnv-${(h >>> 0).toString(16)}`;
-}
-
 export function validateNick(nick: string): string | undefined {
   const n = nick.trim();
   if (n.length < 3 || n.length > 16) return 'Nick musi mieć od 3 do 16 znaków.';
@@ -86,32 +67,30 @@ export function validateNick(nick: string): string | undefined {
   return undefined;
 }
 
-export function validatePassword(password: string): string | undefined {
-  if (password.length < 6) return 'Hasło musi mieć co najmniej 6 znaków.';
-  return undefined;
-}
-
 /** Tworzy konto. Zwraca konto albo komunikat błędu. */
-export async function register(nick: string, password: string): Promise<Account | string> {
-  const err = validateNick(nick) ?? validatePassword(password);
+export function register(nick: string): Account | string {
+  const err = validateNick(nick);
   if (err) return err;
   const all = load();
   if (all[keyOf(nick)]) return 'Taki nick jest już zajęty.';
-  const salt = randomSalt();
-  const acc: Account = { nick: nick.trim(), salt, hash: await hashPassword(password, salt), created: Date.now(), games: 0, best: {} };
+  const acc: Account = { nick: nick.trim(), created: Date.now(), games: 0, best: {} };
   all[keyOf(nick)] = acc;
   if (!save(all)) return 'Nie udało się zapisać konta (pamięć przeglądarki jest zablokowana).';
   setSession(acc.nick);
   return acc;
 }
 
-/** Logowanie. Zwraca konto albo komunikat błędu. */
-export async function login(nick: string, password: string): Promise<Account | string> {
+/** Wybór istniejącego konta z listy. */
+export function login(nick: string): Account | string {
   const acc = load()[keyOf(nick)];
   if (!acc) return 'Nie ma konta o takim nicku.';
-  if ((await hashPassword(password, acc.salt)) !== acc.hash) return 'Nieprawidłowe hasło.';
   setSession(acc.nick);
   return acc;
+}
+
+/** Wszystkie konta na tym urządzeniu (ostatnio utworzone na końcu). */
+export function listAccounts(): Account[] {
+  return Object.values(load()).sort((x, y) => x.created - y.created);
 }
 
 function setSession(nick: string): void {
