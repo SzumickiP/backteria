@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Backteria</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #1c0a10;
+        overflow: hidden;
+      }
+      #game {
+        width: 100%;
+        height: 100%;
+      }
+
+      /* Ekran konta */
+      #account {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: radial-gradient(circle at 50% 35%, #3a1322 0%, #1c0a10 70%);
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: #f5e9ee;
+        z-index: 10;
+      }
+      .acc-card {
+        width: min(360px, 100%);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 24px;
+        background: #2a1019;
+        border: 1px solid #7a3a52;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgb(0 0 0 / 0.5);
+      }
+      .acc-card h1 {
+        margin: 0 0 4px;
+        text-align: center;
+        font-size: 36px;
+      }
+      .acc-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .acc-tabs button {
+        padding: 8px;
+        border: 1px solid #7a3a52;
+        border-radius: 8px;
+        background: transparent;
+        color: #c29aa8;
+        font: inherit;
+        cursor: pointer;
+      }
+      .acc-tabs button.active {
+        background: #1f3b33;
+        border-color: #6ee7b7;
+        color: #f5e9ee;
+      }
+      .acc-card label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 14px;
+        color: #c29aa8;
+      }
+      .acc-card input {
+        padding: 10px;
+        border: 1px solid #7a3a52;
+        border-radius: 8px;
+        background: #1c0a10;
+        color: #f5e9ee;
+        font: inherit;
+        font-size: 16px;
+      }
+      .acc-card input:focus {
+        outline: 2px solid #6ee7b7;
+        outline-offset: 1px;
+      }
+      .acc-hint,
+      .acc-note {
+        margin: 0;
+        font-size: 12px;
+        color: #c29aa8;
+      }
+      .acc-error {
+        margin: 0;
+        min-height: 1.2em;
+        font-size: 14px;
+        color: #fca5a5;
+      }
+      .acc-submit {
+        padding: 12px;
+        border: 0;
+        border-radius: 8px;
+        background: #6ee7b7;
+        color: #1c0a10;
+        font: inherit;
+        font-weight: 700;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .acc-submit:disabled {
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
