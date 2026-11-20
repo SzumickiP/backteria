@@ -21,6 +21,7 @@ import {
   THREAT_PERIOD,
   TOXIN,
 } from '../config';
+import { audio } from '../audio/AudioEngine';
 import { Cell } from '../entities/Cell';
 import { ENEMY_DEFS, Enemy, type EnemyKind } from '../entities/Enemy';
 import { Nutrient } from '../entities/Nutrient';
@@ -35,6 +36,7 @@ import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organ
 import { SPECIES, type SpeciesDef, type SpeciesId } from '../species';
 import { WallLayer } from '../world/WallLayer';
 import { BIOMES, type BiomeId } from '../world/biomes';
+import { Navigator, avoidWalls } from '../world/navigation';
 import { biomeAt, blockedCircle, findOpenSpot, isWall } from '../world/walls';
 
 type ControlMode = 'none' | 'mouse' | 'keyboard';
@@ -140,6 +142,9 @@ export class GameScene extends Phaser.Scene {
   private biomeCheck = 0;
 
   private convertTarget?: Organ;
+  /** nawigacja: mapa odległości do gracza (droga naokoło ścian) */
+  private nav = new Navigator();
+  private flowTimer = 0;
 
   private mission?: Mission;
   private nutrients: Nutrient[] = [];
@@ -223,6 +228,8 @@ export class GameScene extends Phaser.Scene {
     this.organelles = [];
     this.appliedMutations = [];
     this.convertTarget = undefined;
+    this.nav = new Navigator();
+    this.flowTimer = 0;
     this.biome = 'tissue';
     this.biomeCheck = 0;
     this.order = 'follow';
@@ -284,6 +291,7 @@ export class GameScene extends Phaser.Scene {
 
     if (!this.scene.isActive('UIScene')) this.scene.launch('UIScene');
     this.game.events.emit(GameEvents.Start);
+    audio.playMusic(biomeAt(this.player.x, this.player.y).a);
   }
 
   update(_time: number, delta: number): void {
@@ -311,6 +319,12 @@ export class GameScene extends Phaser.Scene {
     this.updateHostCells();
     if (this.isVirus) this.updatePrey(dt);
     else this.updateNutrients(dt);
+    // Mapa odległości do gracza (droga naokoło ścian) — przeliczana 2× na sekundę.
+    this.flowTimer -= dt;
+    if (this.flowTimer <= 0) {
+      this.flowTimer = 0.5;
+      this.nav.buildFlow(this.player.x, this.player.y, 1400);
+    }
     this.updateAllies(dt);
     this.updateStructures(dt);
     this.updateEnemies(dt);
@@ -337,6 +351,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.offerOpen) return;
     this.appliedMutations.push(m);
     this.pendingLevelUps--;
+    audio.sfx('select');
     this.recomputeStats();
     // Mała nagroda za awans: leczenie 20%.
     this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.maxHp * PROGRESSION.levelUpHeal);
@@ -368,6 +383,7 @@ export class GameScene extends Phaser.Scene {
     if (this.organelleCount(def.id) >= def.max) return `Maksymalnie ${def.max} × ${def.name}`;
     if (this.dna < def.cost) return `Potrzeba ${def.cost} DNA`;
     this.dna -= def.cost;
+    audio.sfx('build');
     this.organelles.push(placed);
     this.recomputeStats();
     return undefined;
@@ -380,6 +396,7 @@ export class GameScene extends Phaser.Scene {
     const def = this.organelleDefs.get(o.id);
     this.organelles.splice(index, 1);
     if (def) this.dna += def.cost;
+    audio.sfx('click');
     this.recomputeStats();
   }
 
@@ -422,6 +439,7 @@ export class GameScene extends Phaser.Scene {
     c.destroy();
     this.structures.push(s);
     this.convertCd = CONVERT.cooldown;
+    audio.sfx('structure');
     this.burst(s.x, s.y, STRUCTURES[kind].tint, 20);
 
     // Limit budowli — najstarsza się rozpada.
@@ -625,6 +643,7 @@ export class GameScene extends Phaser.Scene {
     if (this.isVirus) {
       // Szarża.
       this.dashTime = s.dashDuration;
+      audio.sfx('dash');
       this.dashDir = dir;
       this.dashHits.clear();
       this.burst(p.x, p.y, COLORS.dashTrail, 8);
@@ -655,6 +674,7 @@ export class GameScene extends Phaser.Scene {
       });
     }
     p.setPulse(0.9);
+    audio.sfx('shoot');
   }
 
   private trail(x: number, y: number): void {
@@ -689,6 +709,7 @@ export class GameScene extends Phaser.Scene {
         n.destroy();
         this.nutrients.splice(i, 1);
         this.biomass += 1;
+        audio.sfx('eat');
         this.gainXp(1);
       } else if (d > DESPAWN_RADIUS) {
         n.destroy();
@@ -723,6 +744,7 @@ export class GameScene extends Phaser.Scene {
     const a = this.createAlly(this.player.x, this.player.y);
     a.setRotation(this.player.rotation);
     this.burst(a.x, a.y, COLORS.burstAlly, 8);
+    audio.sfx('divide');
   }
 
   private createAlly(x: number, y: number): Cell {
@@ -758,6 +780,7 @@ export class GameScene extends Phaser.Scene {
     this.convertTarget = target;
     this.burst(target.x, target.y, COLORS.burstCopy, 8);
     this.game.events.emit(GameEvents.ConvertOffer);
+    audio.sfx('click');
   }
 
   private updateStructures(dt: number): void {
@@ -861,6 +884,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Komórka/bakteria zainfekowana do końca pęka i uwalnia kopie wirusa. */
   private onInfected(c: Cell, xp: number, color: number): void {
+    audio.sfx('infect');
     this.burst(c.x, c.y, color, 12);
     this.burst(c.x, c.y, COLORS.burstCopy, 6);
     this.releaseCopies(c.x, c.y, this.stats.copies);
@@ -914,14 +938,24 @@ export class GameScene extends Phaser.Scene {
     const claimed = new Set<object>();
     const forageTargets: { x: number; y: number }[] = this.isVirus ? [...this.hostCells, ...this.preyBacteria] : this.nutrients;
 
+    // Otaczanie wspólnego celu: miejsca w pierścieniu wg obecnego kąta wokół celu (bez krzyżowania dróg).
+    const slotOf = new Map<Cell, number>();
+    if (focus) {
+      [...this.allies]
+        .sort((a, b) => Math.atan2(a.y - focus.y, a.x - focus.x) - Math.atan2(b.y - focus.y, b.x - focus.x))
+        .forEach((a, i) => slotOf.set(a, i));
+    }
+    const slotBase = focus && this.allies.length ? Math.atan2(this.allies[0].y - focus.y, this.allies[0].x - focus.x) : 0;
+
     this.allies.forEach((a, i) => {
       const flock = this.flockSteer(a, mates, 110);
       const speed = this.stats.speed * 1.25;
       if (focus) {
-        // Rozstawienie wokół wspólnego celu, żeby nie tłoczyć się w jednym punkcie.
-        const ang = (i / Math.max(1, n)) * TAU + this.elapsed * 0.5;
-        const ring = (focus.radius + a.radius) * 0.6;
-        this.steerMove(a, focus.x + Math.cos(ang) * ring, focus.y + Math.sin(ang) * ring, speed, dt, 2, flock);
+        // Kolonia otacza cel ze wszystkich stron i atakuje razem.
+        const ang = slotBase + ((slotOf.get(a) ?? i) / Math.max(1, n)) * TAU;
+        const ring = (focus.radius + a.radius) * 0.85;
+        const t = this.waypoint(a, { x: focus.x + Math.cos(ang) * ring, y: focus.y + Math.sin(ang) * ring });
+        this.steerMove(a, t.x, t.y, speed, dt, 2, flock);
       } else if (this.order === 'attack' || this.order === 'hold') {
         // Marsz do wskazanego miejsca i ustawienie w krąg.
         const ang = (i / Math.max(1, n)) * TAU;
@@ -948,9 +982,8 @@ export class GameScene extends Phaser.Scene {
         // Formacja za graczem: stado płynie tam, gdzie gracz.
         const spread = (i - (n - 1) / 2) * 0.35;
         const r = p.radius + 30 + (i % 3) * 14;
-        const fx = p.x + Math.cos(back + spread) * r;
-        const fy = p.y + Math.sin(back + spread) * r;
-        this.steerMove(a, fx, fy, this.stats.speed * 1.35, dt, 8, flock);
+        const f = this.waypoint(a, { x: p.x + Math.cos(back + spread) * r, y: p.y + Math.sin(back + spread) * r });
+        this.steerMove(a, f.x, f.y, this.stats.speed * 1.35, dt, 8, flock);
       }
       if (this.species.rod) a.faceMovement(dt, 9);
       else a.rotation += dt * 2;
@@ -987,6 +1020,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (order === 'attack' || order === 'hold') this.burst(point.x, point.y, 0x5eead4, 8);
     this.game.events.emit(GameEvents.Toast, `Rozkaz: ${ORDER_NAMES[order]}`);
+    audio.sfx('order');
   }
 
   // ───────────────────────── zachowanie stadne ─────────────────────────
@@ -995,7 +1029,7 @@ export class GameScene extends Phaser.Scene {
    * Siły stada (boids): rozdzielanie (nie wpadaj na sąsiadów), wyrównanie (płyń jak sąsiedzi)
    * i spójność (trzymaj się grupy). Zwraca wektor do dodania do kierunku ruchu.
    */
-  private flockSteer(c: Cell, mates: Cell[], radius: number): Point {
+  private flockSteer(c: Cell, mates: Cell[], radius: number, separationOnly = false): Point {
     let sx = 0;
     let sy = 0;
     let ax = 0;
@@ -1022,6 +1056,7 @@ export class GameScene extends Phaser.Scene {
       cy += m.y;
     }
     if (n === 0) return { x: 0, y: 0 };
+    if (separationOnly) return { x: sx * 2.4, y: sy * 2.4 };
     const al = Math.hypot(ax, ay) || 1;
     cx = cx / n - c.x;
     cy = cy / n - c.y;
@@ -1053,11 +1088,40 @@ export class GameScene extends Phaser.Scene {
     const x0 = c.x;
     const y0 = c.y;
     if (l > 0.03) {
+      // Czujniki ścian: kierunek korygowany zawczasu (co ~0.12 s, potem używany jako przesunięcie kąta).
+      const desired = Math.atan2(my, mx);
+      c.avoidTimer -= dt;
+      if (c.avoidTimer <= 0) {
+        c.avoidTimer = 0.12;
+        const a = avoidWalls(c.x, c.y, c.radius, mx / l, my / l, 30 + speed * 0.25);
+        c.avoidOffset = Phaser.Math.Angle.Wrap(Math.atan2(a.y, a.x) - desired);
+      }
+      const ang = desired + c.avoidOffset;
       const step = speed * dt * Math.min(1, l);
-      c.tryMove((mx / l) * step, (my / l) * step);
+      c.tryMove(Math.cos(ang) * step, Math.sin(ang) * step);
     }
     c.vx = (c.x - x0) / dt;
     c.vy = (c.y - y0) / dt;
+  }
+
+  /**
+   * Punkt pośredni na drodze do celu: gdy cel jest daleko lub za ścianą, idź mapą odległości
+   * (tunelami naokoło ścian); gdy blisko i widać go — prosto.
+   */
+  private waypoint(c: Cell, target: Point): Point {
+    const d = dist(c, target);
+    // Mapa odległości prowadzi do gracza — używamy jej, gdy cel jest przy graczu, ale za ścianą.
+    if (d > 90 && dist(target, this.player) < 220) {
+      if (this.elapsed >= c.losCheckAt) {
+        c.seesTarget = this.nav.lineOfSight(c.x, c.y, target.x, target.y);
+        c.losCheckAt = this.elapsed + 0.25 + Math.random() * 0.1;
+      }
+      if (!c.seesTarget) {
+        const f = this.nav.flowDir(c.x, c.y);
+        if (f) return { x: c.x + f.x * 120, y: c.y + f.y * 120 };
+      }
+    }
+    return target;
   }
 
   // ───────────────────────── wrogowie ─────────────────────────
@@ -1097,10 +1161,17 @@ export class GameScene extends Phaser.Scene {
     this.biomeCheck -= dt;
     if (this.biomeCheck > 0) return;
     this.biomeCheck = 0.5;
+
+    // Intensywność muzyki: wrogowie w pobliżu + ogólne zagrożenie.
+    const near = this.enemies.filter((e) => dist(e, this.player) < 600).length;
+    audio.setIntensity(near / 12 + (this.threat - 1) * 0.04);
+
     const b = biomeAt(this.player.x, this.player.y).a;
     if (b !== this.biome) {
       this.biome = b;
       this.game.events.emit(GameEvents.BiomeChange, BIOMES[b].name);
+      audio.setTheme(b);
+      audio.sfx('swell');
     }
   }
 
@@ -1144,8 +1215,53 @@ export class GameScene extends Phaser.Scene {
       else byKind.set(e.kind, [e]);
     }
 
+    // Myślenie gatunku: wrogowie tego samego rodzaju atakujący ten sam cel najpierw go OTACZAJĄ
+    // (rozstawiają się po okręgu), a gdy pierścień jest gotowy — uderzają razem ze wszystkich stron.
+    const victimOf = new Map<Enemy, Cell>();
+    const packs = new Map<Cell, Map<EnemyKind, Enemy[]>>();
+    for (const e of this.enemies) {
+      const v = this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
+      if (!v) continue;
+      victimOf.set(e, v);
+      if (e.def.shooter || e.missionTarget || e.guardOf) continue;
+      let byK = packs.get(v);
+      if (!byK) packs.set(v, (byK = new Map()));
+      const list = byK.get(e.kind);
+      if (list) list.push(e);
+      else byK.set(e.kind, [e]);
+    }
+    const surround = new Map<Enemy, Point>();
+    for (const [v, byK] of packs) {
+      for (const pack of byK.values()) {
+        if (pack.length < 2) continue;
+        // Kierunek, z którego nadchodzi gromada (środek ciężkości), i kąty członków względem niego.
+        const gx = pack.reduce((s, e) => s + e.x, 0) / pack.length;
+        const gy = pack.reduce((s, e) => s + e.y, 0) / pack.length;
+        const center = Math.atan2(gy - v.y, gx - v.x);
+        const rel = (e: Enemy) => Phaser.Math.Angle.Wrap(Math.atan2(e.y - v.y, e.x - v.x) - center);
+        // Kolejność wg kąta — bez krzyżowania się dróg; miejsca rozłożone równo wokół celu,
+        // symetrycznie względem kierunku nadejścia (skrajni obchodzą cel z obu stron).
+        pack.sort((a, b) => rel(a) - rel(b));
+        const base = center - ((pack.length - 1) / 2) * ((Math.PI * 2) / pack.length);
+        const contact = v.radius + pack[0].radius;
+        const ring = contact + 70;
+        const step = (Math.PI * 2) / pack.length;
+        const slot = (i: number, r: number) => ({ x: v.x + Math.cos(base + i * step) * r, y: v.y + Math.sin(base + i * step) * r });
+        // Pierścień gotowy, gdy ≥ 70% gromady stoi na swoich miejscach wokół celu.
+        const inPlace = pack.filter((e, i) => dist(e, slot(i, ring)) < 50).length;
+        const ready = inPlace >= Math.ceil(pack.length * 0.7);
+        pack.forEach((e, i) => {
+          e.surroundTime += dt;
+          // Atak razem, gdy pierścień gotowy albo otaczanie trwa za długo (cel ucieka).
+          const strike = ready || e.surroundTime > 4;
+          if (strike && e.surroundTime > 6) e.surroundTime = 0; // po ataku — kolejne okrążenie
+          surround.set(e, slot(i, strike ? contact * 0.85 : ring));
+        });
+      }
+    }
+
     this.enemies = this.enemies.filter((e) => {
-      const victim = this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
+      const victim = victimOf.get(e);
       let target: Point;
       let stopAt = 0;
       let speed = e.speed;
@@ -1179,17 +1295,26 @@ export class GameScene extends Phaser.Scene {
         target = { x: g.x + Math.cos(a) * (g.radius + 90), y: g.y + Math.sin(a) * (g.radius + 90) };
         speed *= 0.6;
       } else if (victim) {
-        target = victim;
-        stopAt = e.radius + victim.radius;
+        const slot = surround.get(e);
+        if (slot) {
+          target = slot;
+          stopAt = 2;
+        } else {
+          target = victim;
+          stopAt = e.radius + victim.radius;
+        }
       } else {
         // Ciągła presja: dryf w stronę gracza.
         target = pl;
         stopAt = e.radius + pl.radius;
         speed *= 0.5;
       }
+      // Droga naokoło ścian (mapa odległości) + czujniki ścian w steerMove.
+      const wp = this.waypoint(e, target);
       const mates = byKind.get(e.kind);
-      if (mates) this.steerMove(e, target.x, target.y, speed, dt, stopAt, this.flockSteer(e, mates, 120));
-      else e.moveToward(target.x, target.y, speed, dt, stopAt);
+      // Przy otaczaniu tylko odpychanie (bez skupiania się w kupę), w marszu — pełne stado.
+      const flock = mates ? this.flockSteer(e, mates, 120, surround.has(e)) : undefined;
+      this.steerMove(e, wp.x, wp.y, speed, dt, wp === target ? stopAt : 0, flock);
 
       if (e.motion === 'spin') e.rotation += dt * (e.kind === 'virus' ? 1.5 : e.radius < 10 ? 2 : 0.3);
       else e.faceMovement(dt, e.kind === 'antibody' || e.kind === 'spirochete' ? 8 : 3);
@@ -1223,6 +1348,7 @@ export class GameScene extends Phaser.Scene {
       if (!dashing && dPl < pl.radius + e.radius + 2) {
         pl.hp -= e.dps * s.armor * dt;
         playerHurt = true;
+        audio.sfx('hurt');
       }
       for (const a of this.allies) {
         if (dist(e, a) < a.radius + e.radius + 3) {
@@ -1281,6 +1407,7 @@ export class GameScene extends Phaser.Scene {
       }
       this.burst(st.x, st.y, STRUCTURES[st.kind].tint, 16);
       this.game.events.emit(GameEvents.Toast, `${STRUCTURES[st.kind].name} zniszczona`);
+      audio.sfx('popBig');
       st.destroy();
       return false;
     });
@@ -1292,6 +1419,7 @@ export class GameScene extends Phaser.Scene {
       if (!this.isVirus) this.biomass += e.biomass;
       this.gainXp(e.xp);
       this.burst(e.x, e.y, e.burstColor, e.radius > 15 ? 14 : 8);
+      audio.sfx(e.radius > 20 ? 'popBig' : 'pop');
       // Laseczka przetrwalnikowa: po śmierci uwalnia przetrwalniki.
       const od = e.def.onDeath;
       if (od) for (let i = 0; i < od.count; i++) spawned.push([od.kind, { x: e.x + Phaser.Math.Between(-12, 12), y: e.y + Phaser.Math.Between(-12, 12) }]);
@@ -1368,6 +1496,8 @@ export class GameScene extends Phaser.Scene {
       onUpdate: (tw) => from.active && from.setPulse(tw.getValue() ?? 1),
     });
     this.burst(x, y, tint ?? COLORS.burstOrgan, 3);
+    // Tylko strzały widoczne w pobliżu gracza są słyszalne.
+    if (dist(from, this.player) < 700) audio.sfx('protein');
   }
 
   private updateProjectiles(dt: number): void {
@@ -1400,7 +1530,10 @@ export class GameScene extends Phaser.Scene {
         if (v === this.player && dashing) continue; // szarża = nietykalność
         if (p.hostile) v.hp -= p.damage * this.stats.armor;
         else v.hurt(p.damage);
-        if (v === this.player) this.playerHitFlash = 0.15;
+        if (v === this.player) {
+          this.playerHitFlash = 0.15;
+          audio.sfx('hurt');
+        }
         this.burst(p.img.x, p.img.y, p.burstColor, 5);
         p.img.destroy();
         return false;
@@ -1459,6 +1592,7 @@ export class GameScene extends Phaser.Scene {
       for (let i = 0; i < 6; i++) this.spawnGuard('antibody', organ);
     }
     this.game.events.emit(GameEvents.MissionStart, type);
+    audio.sfx('alarm');
   }
 
   private spawnAttacker(organ: Organ): void {
@@ -1507,6 +1641,7 @@ export class GameScene extends Phaser.Scene {
     // Narząd znika po chwili.
     this.tweens.add({ targets: o, alpha: 0, delay: 2500, duration: 2000, onComplete: () => o.destroy() });
     this.game.events.emit(GameEvents.MissionEnd, m.type, success);
+    audio.sfx(success ? 'success' : 'fail');
   }
 
   // ───────────────────────── rozwój ─────────────────────────
@@ -1516,6 +1651,7 @@ export class GameScene extends Phaser.Scene {
     while (this.xp >= this.xpToNext) {
       this.xp -= this.xpToNext;
       this.level++;
+      audio.sfx('levelup');
       this.pendingLevelUps++;
       if (this.level % DNA.everyLevels === 0) {
         this.dna += 1;
@@ -1538,6 +1674,9 @@ export class GameScene extends Phaser.Scene {
   private checkGameOver(): void {
     if (this.player.hp > 0) return;
     this.over = true;
+    audio.sfx('death');
+    audio.setTheme('menu');
+    audio.setIntensity(0);
     this.burst(this.player.x, this.player.y, this.isVirus ? COLORS.burstCopy : COLORS.burstPlayer, 24);
     this.player.setVisible(false);
     this.flagella.clear();

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { audio } from '../audio/AudioEngine';
 import { drawOrganelles } from '../graphics/organelleDraw';
 import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organelles';
 import type { GameScene } from './GameScene';
@@ -70,6 +71,7 @@ export class EditorScene extends Phaser.Scene {
         if (p.rightButtonDown()) return;
         this.selected = def;
         this.message.setText('');
+        audio.sfx('click');
       });
       this.buttons.push({ def, rect, info });
       py += rowH;
@@ -179,6 +181,7 @@ export class EditorScene extends Phaser.Scene {
     const placed = this.placementAt(p.x, p.y, this.selected);
     if (!placed) return;
     const err = gs.addOrganelle(placed);
+    if (err) audio.sfx('error');
     if (err) this.message.setColor('#fca5a5').setText(err);
     else this.message.setColor(ACCENT).setText(`Dodano: ${this.selected.name}`);
   }

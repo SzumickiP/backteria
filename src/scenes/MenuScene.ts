@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { getAccount } from '../account/accounts';
+import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
 import { CHUNK } from '../config';
 import { GameEvents } from '../events';
 import { TEX, createTextures } from '../graphics/textures';
@@ -98,9 +99,27 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
+    // Dźwięk: muzyka menu + przełącznik trybu (N).
+    audio.playMusic('menu');
+    audio.setTheme('menu');
+    audio.setIntensity(0);
+    const soundText = this.add
+      .text(16, height - 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8' })
+      .setOrigin(0, 1)
+      .setInteractive({ useHandCursor: true });
+    const showSound = () => soundText.setText(`Dźwięk: ${SOUND_MODE_NAMES[audio.mode]}  [N]`);
+    const cycleSound = () => {
+      audio.cycleMode();
+      audio.sfx('click');
+      showSound();
+    };
+    soundText.on('pointerdown', cycleSound);
+    showSound();
+
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'Digit1' || e.code === 'Numpad1') this.pick('bacterium');
       if (e.code === 'Digit2' || e.code === 'Numpad2') this.pick('virus');
+      if (e.code === 'KeyN') cycleSound();
     };
     this.input.keyboard!.on('keydown', onKey);
     const onResize = () => this.scene.restart();
@@ -118,6 +137,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private pick(id: SpeciesId): void {
+    audio.sfx('select');
     this.scene.start('GameScene', { species: id });
   }
 }

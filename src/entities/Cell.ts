@@ -22,6 +22,14 @@ export class Cell extends Phaser.GameObjects.Image {
   /** prędkość z poprzedniej klatki (px/s) — do zachowań stadnych */
   vx = 0;
   vy = 0;
+  /** czujniki ścian: korekta kąta ruchu i czas do ponownego sprawdzenia (rozłożone losowo między komórki) */
+  avoidOffset = 0;
+  avoidTimer = Math.random() * 0.12;
+  /** jak długo komórka czeka w pierścieniu wokół celu (otaczanie) */
+  surroundTime = 0;
+  /** czy widzi swój cel (bez ściany po drodze) i kiedy sprawdzić to ponownie (czas gry) */
+  seesTarget = true;
+  losCheckAt = 0;
   private _radius: number;
   private pulse = 1;
   private readonly texRadius: number;

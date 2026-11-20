@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { recordResult } from '../account/accounts';
+import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
 import { CONVERT, STRUCTURES } from '../config';
 import type { StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
@@ -10,7 +11,7 @@ import { biomeAt, openness } from '../world/walls';
 import { ORDER_NAMES, type GameScene } from './GameScene';
 
 /** Minimapa: rozmiar w px ekranu i ile px świata przypada na 1 px mapy. */
-const MINIMAP = { size: 150, res: 100, worldPerPx: 44, rowsPerFrame: 10 } as const;
+const MINIMAP = { size: 150, res: 100, worldPerPx: 44, rowsPerFrame: 4 } as const;
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const TEXT = '#f5e9ee';
@@ -144,7 +145,7 @@ export class UIScene extends Phaser.Scene {
         g.isVirus
           ? 'Mysz/WASD — ruch  ·  LPM/F — szarża  ·  dotknij komórki — zaraź  ·  E — przerób komórkę  ·  Esc — pauza'
           : `Mysz/WASD — ruch  ·  LPM/F — toksyny  ·  Spacja/PPM — podział (${g.stats.divideCost})  ·  E — przerób komórkę  ·  Esc — pauza`,
-        `Rozkazy (miejsce = kursor):  Q — za mną  ·  G — atak  ·  H — trzymaj pozycję  ·  T — ${g.isVirus ? 'zarażaj' : 'zbieraj'}   ·   V — edytor komórki`,
+        `Rozkazy (miejsce = kursor):  Q — za mną  ·  G — atak  ·  H — trzymaj pozycję  ·  T — ${g.isVirus ? 'zarażaj' : 'zbieraj'}   ·   V — edytor komórki   ·   N — dźwięk`,
       ])
       .setPosition(16, height - 12);
 
@@ -479,6 +480,12 @@ export class UIScene extends Phaser.Scene {
     }
     if (e.code === 'Escape' || e.code === 'KeyP') {
       this.togglePause();
+      audio.sfx('click');
+      return;
+    }
+    if (e.code === 'KeyN') {
+      this.showToast(`Dźwięk: ${SOUND_MODE_NAMES[audio.cycleMode()]}`);
+      audio.sfx('click');
       return;
     }
     if (this.pauseOverlay) {
