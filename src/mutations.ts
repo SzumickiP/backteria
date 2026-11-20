@@ -36,8 +36,8 @@ export interface PlayerStats {
 export const BACTERIUM_STATS: PlayerStats = {
   maxHp: 85,
   speed: 230,
-  damage: 18,
-  reach: 8,
+  damage: 24,
+  reach: 14,
   regen: 0.3,
   divideCost: 20,
   maxColony: 3,
@@ -56,8 +56,8 @@ export const BACTERIUM_STATS: PlayerStats = {
 export const VIRUS_STATS: PlayerStats = {
   maxHp: 55,
   speed: 260,
-  damage: 26,
-  reach: 6,
+  damage: 32,
+  reach: 12,
   regen: 0.25,
   divideCost: 0,
   maxColony: 5,
@@ -83,8 +83,8 @@ export interface Mutation {
 export const BACTERIUM_MUTATIONS: Mutation[] = [
   { id: 'flagella', name: 'Wici', description: '+8% prędkości ruchu', apply: (s) => { s.speed *= 1.08; } },
   { id: 'wall', name: 'Gruba ściana komórkowa', description: '+15 maks. zdrowia', apply: (s) => { s.maxHp += 15; } },
-  { id: 'toxins', name: 'Toksyny', description: '+20% zadawanych obrażeń', apply: (s) => { s.damage *= 1.2; } },
-  { id: 'fimbriae', name: 'Fimbrie', description: '+4 zasięgu ataku', apply: (s) => { s.reach += 4; } },
+  { id: 'toxins', name: 'Toksyny', description: '+30% zadawanych obrażeń', apply: (s) => { s.damage *= 1.3; } },
+  { id: 'fimbriae', name: 'Fimbrie', description: '+6 zasięgu ataku', apply: (s) => { s.reach += 6; } },
   { id: 'biofilm', name: 'Biofilm', description: '+0,6 regeneracji zdrowia na sekundę', apply: (s) => { s.regen += 0.6; } },
   {
     id: 'mitosis',
@@ -118,8 +118,8 @@ export const BACTERIUM_MUTATIONS: Mutation[] = [
 export const VIRUS_MUTATIONS: Mutation[] = [
   { id: 'light-capsid', name: 'Lekki kapsyd', description: '+8% prędkości ruchu', apply: (s) => { s.speed *= 1.08; } },
   { id: 'envelope', name: 'Otoczka lipidowa', description: '+10 maks. zdrowia', apply: (s) => { s.maxHp += 10; } },
-  { id: 'lytic', name: 'Enzymy lityczne', description: '+20% szybkości infekcji i obrażeń', apply: (s) => { s.damage *= 1.2; } },
-  { id: 'spikes', name: 'Dłuższe wypustki', description: '+4 zasięgu infekcji', apply: (s) => { s.reach += 4; } },
+  { id: 'lytic', name: 'Enzymy lityczne', description: '+30% szybkości infekcji i obrażeń', apply: (s) => { s.damage *= 1.3; } },
+  { id: 'spikes', name: 'Dłuższe wypustki', description: '+6 zasięgu infekcji', apply: (s) => { s.reach += 6; } },
   { id: 'replication', name: 'Szybka replikacja', description: '+1 kopia z każdej zainfekowanej komórki', apply: (s) => { s.copies += 1; } },
   { id: 'pandemic', name: 'Pandemia', description: '+2 miejsca na kopie', apply: (s) => { s.maxColony += 2; } },
   {

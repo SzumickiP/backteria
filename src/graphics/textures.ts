@@ -414,22 +414,55 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
     ctx.fill();
   }
 
+  // Nukleoid: poskręcana nić DNA w środku komórki.
+  ctx.filter = 'none';
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = p.granule;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 3; k++) {
+    ctx.beginPath();
+    for (let x = -hl * 0.5; x <= hl * 0.5; x += 3) {
+      const y = Math.sin(x * 0.28 + k * 2.1) * hw * 0.32 + Math.sin(x * 0.11 + k) * hw * 0.16;
+      if (x === -hl * 0.5) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Dolne światło odbite (refleks od podłoża) i ostry odblask na górze.
   ctx.filter = 'blur(3px)';
-  ctx.globalAlpha = 0.45;
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = p.light;
+  ctx.beginPath();
+  ctx.ellipse(hl * 0.1, hw * 0.62, hl * 0.6, hw * 0.16, 0, 0, TAU);
+  ctx.fill();
+  ctx.globalAlpha = 0.55;
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.ellipse(-hl * 0.1, -hw * 0.5, hl * 0.55, hw * 0.18, 0, 0, TAU);
   ctx.fill();
+  ctx.filter = 'none';
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.ellipse(-hl * 0.32, -hw * 0.56, hl * 0.14, hw * 0.07, 0, 0, TAU);
+  ctx.fill();
   ctx.restore();
 
-  // Błona.
-  ctx.lineWidth = 3;
+  // Błona (podwójna: zewnętrzna ciemna + ściana komórkowa z jasną krawędzią).
+  ctx.lineWidth = 3.5;
   ctx.strokeStyle = p.membrane;
   capsule(ctx, hl, hw);
   ctx.stroke();
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-  capsule(ctx, hl - 3, hw - 3);
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = p.light;
+  ctx.globalAlpha = 0.5;
+  capsule(ctx, hl - 2.5, hw - 2.5);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  capsule(ctx, hl - 5, hw - 5);
   ctx.stroke();
 
   if (p.extra) {
@@ -615,10 +648,39 @@ function drawVirus(ctx: Ctx, w: number, h: number, p: VirusPalette): void {
     ctx.arc(Math.cos(a) * r, Math.sin(a) * r, 1.6 + rng.frac() * 0.8, 0, TAU);
     ctx.fill();
   }
+  // Fasetki kapsydu (ikosaedr): siatka trójkątów na powierzchni.
+  ctx.strokeStyle = p.dots;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.75;
+  const hexR = rc * 0.52;
+  for (let k = 0; k < 6; k++) {
+    const a1 = (k / 6) * TAU + 0.3;
+    const a2 = ((k + 1) / 6) * TAU + 0.3;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a1) * hexR, Math.sin(a1) * hexR);
+    ctx.lineTo(Math.cos(a2) * hexR, Math.sin(a2) * hexR);
+    ctx.lineTo(Math.cos(a1 + 0.52) * rc * 1.1, Math.sin(a1 + 0.52) * rc * 1.1);
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // Cień wewnętrzny przy krawędzi (głębia) i odblask.
+  const sh = ctx.createRadialGradient(0, 0, rc * 0.6, 0, 0, rc);
+  sh.addColorStop(0, 'rgba(0,0,0,0)');
+  sh.addColorStop(1, 'rgba(0,0,0,0.35)');
+  ctx.fillStyle = sh;
+  ctx.beginPath();
+  ctx.arc(0, 0, rc, 0, TAU);
+  ctx.fill();
   ctx.filter = 'blur(2px)';
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.beginPath();
   ctx.ellipse(-8, -11, 10, 5, -0.4, 0, TAU);
+  ctx.fill();
+  ctx.filter = 'none';
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath();
+  ctx.ellipse(-11, -14, 3.2, 1.6, -0.5, 0, TAU);
   ctx.fill();
   ctx.restore();
 

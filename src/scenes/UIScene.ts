@@ -136,14 +136,24 @@ export class UIScene extends Phaser.Scene {
     // Pasek zdrowia
     const barW = 220;
     this.hud.clear();
-    this.hud.fillStyle(0x000000, 0.5).fillRoundedRect(16, 16, barW, 16, 4);
+    this.hud.fillStyle(0x000000, 0.55).fillRoundedRect(16, 16, barW, 16, 6);
     const hpFrac = Phaser.Math.Clamp(g.player.hp / g.stats.maxHp, 0, 1);
-    this.hud.fillStyle(hpFrac > 0.3 ? 0x10b981 : 0xef4444, 1).fillRoundedRect(16, 16, Math.max(8, barW * hpFrac), 16, 4);
-    this.hpText.setText(`${Math.ceil(Math.max(0, g.player.hp))} / ${Math.round(g.stats.maxHp)}`).setPosition(22, 17);
+    const hpW = Math.max(10, barW * hpFrac);
+    const hpOk = hpFrac > 0.3;
+    this.hud.fillStyle(hpOk ? 0x0b8f65 : 0xb91c1c, 1).fillRoundedRect(16, 16, hpW, 16, 6);
+    this.hud.fillStyle(hpOk ? 0x34d399 : 0xf87171, 1).fillRoundedRect(16, 16, hpW, 9, { tl: 6, tr: 6, bl: 0, br: 0 });
+    this.hud.fillStyle(0xffffff, 0.22).fillRoundedRect(19, 18, Math.max(4, hpW - 6), 3, 1.5);
+    this.hud.lineStyle(1.5, 0xf5e9ee, 0.45).strokeRoundedRect(16, 16, barW, 16, 6);
+    this.hpText.setText(`${Math.ceil(Math.max(0, g.player.hp))} / ${Math.round(g.stats.maxHp)}`).setPosition(24, 17);
 
     // Pasek doświadczenia
-    this.hud.fillStyle(0x000000, 0.5).fillRect(16, 37, barW, 6);
-    this.hud.fillStyle(0xfbbf24, 1).fillRect(16, 37, barW * Phaser.Math.Clamp(g.xp / g.xpToNext, 0, 1), 6);
+    const xpW = barW * Phaser.Math.Clamp(g.xp / g.xpToNext, 0, 1);
+    this.hud.fillStyle(0x000000, 0.55).fillRoundedRect(16, 37, barW, 7, 3);
+    if (xpW > 1) {
+      this.hud.fillStyle(0xd99a0b, 1).fillRoundedRect(16, 37, Math.max(6, xpW), 7, 3);
+      this.hud.fillStyle(0xfde68a, 0.9).fillRoundedRect(16, 37, Math.max(6, xpW), 3.5, 2);
+    }
+    this.hud.lineStyle(1, 0xf5e9ee, 0.3).strokeRoundedRect(16, 37, barW, 7, 3);
 
     const lines = [`${g.species.name} · poziom ${g.level} · DNA ${g.dna}${g.dna > 0 ? ' (V — buduj)' : ''}`];
     if (!g.isVirus) lines.push(`Biomasa ${Math.floor(g.biomass)}`);
@@ -162,8 +172,9 @@ export class UIScene extends Phaser.Scene {
     // Pasek odnowienia ataku specjalnego (pod tekstem).
     const abY = this.statsText.y + this.statsText.height + 4;
     const cdFrac = 1 - Phaser.Math.Clamp(g.abilityCd / g.stats.abilityCooldown, 0, 1);
-    this.hud.fillStyle(0x000000, 0.5).fillRect(16, abY, 120, 5);
-    this.hud.fillStyle(cdFrac >= 1 ? 0xbef264 : 0x6b7280, 1).fillRect(16, abY, 120 * cdFrac, 5);
+    this.hud.fillStyle(0x000000, 0.55).fillRoundedRect(16, abY, 120, 6, 3);
+    if (cdFrac > 0.02) this.hud.fillStyle(cdFrac >= 1 ? 0xbef264 : 0x6b7280, 1).fillRoundedRect(16, abY, Math.max(6, 120 * cdFrac), 6, 3);
+    this.hud.lineStyle(1, 0xf5e9ee, 0.3).strokeRoundedRect(16, abY, 120, 6, 3);
 
     this.rightText
       .setText([`Czas ${formatTime(g.elapsed)}`, `Zagrożenie ${Math.floor(g.threat)}`, `Zabici ${g.kills}`, `Zadania ${g.missionsDone}`])

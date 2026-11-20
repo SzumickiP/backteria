@@ -8,7 +8,7 @@ import { biomeAt, opennessIn, perlin } from './walls';
  * co dawało cienkie linie na łączeniach kafli (mieszanie z przeciwległą krawędzią).
  */
 const CHUNK = 768;
-const RES = 120;
+const RES = 160;
 const STEP = CHUNK / RES;
 
 const smooth = (a: number, b: number, x: number): number => {
@@ -25,9 +25,10 @@ interface Job {
   key: string;
   img: ImageData;
   row: number;
-  /** wartości openness z poprzedniego wiersza (indeks px+1; px = -1 to kolumna z lewej) */
+  /** wartości openness z wierszy py-1, py, py+1 (indeks px+1; px = -1 i px = RES to kolumny sąsiednie) */
   prev: Float32Array;
   cur: Float32Array;
+  nxt: Float32Array;
 }
 
 /**
@@ -119,17 +120,19 @@ export class WallLayer {
       key,
       img: new ImageData(RES, RES),
       row: 0,
-      prev: new Float32Array(RES + 1),
-      cur: new Float32Array(RES + 1),
+      prev: new Float32Array(RES + 2),
+      cur: new Float32Array(RES + 2),
+      nxt: new Float32Array(RES + 2),
     };
-    // Wiersz -1 (potrzebny do oświetlenia pierwszego wiersza).
+    // Wiersze -1 i 0 (potrzebne do oświetlenia pierwszego wiersza).
     this.sampleRow(job, -1, job.prev);
+    this.sampleRow(job, 0, job.cur);
     return job;
   }
 
   private sampleRow(job: Job, py: number, out: Float32Array): void {
     const wy = job.j * CHUNK + (py + 0.5) * STEP;
-    for (let px = -1; px < RES; px++) {
+    for (let px = -1; px <= RES; px++) {
       const wx = job.i * CHUNK + (px + 0.5) * STEP;
       out[px + 1] = opennessIn(wx, wy, biomeAt(wx, wy));
     }
@@ -138,9 +141,12 @@ export class WallLayer {
   /** Liczy jeden wiersz; zwraca true, gdy kafel jest gotowy. */
   private step(job: Job): boolean {
     const py = job.row;
-    this.sampleRow(job, py, job.cur);
+    this.sampleRow(job, py + 1, job.nxt);
     this.paintRow(job, py);
-    [job.prev, job.cur] = [job.cur, job.prev];
+    const old = job.prev;
+    job.prev = job.cur;
+    job.cur = job.nxt;
+    job.nxt = old;
     job.row++;
     if (job.row < RES) return false;
 
@@ -158,14 +164,21 @@ export class WallLayer {
     this.chunks.set(key, image);
   }
 
-  /** Mięsista ściana: jasna błona na krawędzi, ciemniejsze, włókniste wnętrze, cień na podłożu, kolory biomu. */
+  /**
+   * Realistyczna, gładka ściana tkanki: zaokrąglona (bevel) krawędź liczona z gradientu pola openness,
+   * oświetlenie z lewego górnego rogu (dyfuzja + wilgotny połysk), prześwitywanie krwi przy krawędzi,
+   * sieć naczyń włosowatych i plamista, komórkowa faktura. Na podłożu miękki cień zależny od odległości.
+   */
   private paintRow(job: Job, py: number): void {
     const d = job.img.data;
-    const { i, j } = job;
+    const { i, j, prev, cur, nxt } = job;
     const wy = j * CHUNK + (py + 0.5) * STEP;
+    // Kierunek światła (z lewej-góry) i wektor połówkowy do odbicia.
+    const LX = -0.5, LY = -0.6, LZ = 0.62;
     for (let px = 0; px < RES; px++) {
       const wx = i * CHUNK + (px + 0.5) * STEP;
-      const o = job.cur[px + 1];
+      const c = px + 1;
+      const o = cur[c];
       const p = (py * RES + px) * 4;
 
       // Kolory biomu (płynnie mieszane na granicach).
@@ -175,19 +188,26 @@ export class WallLayer {
       const floor = mixRgb(A.floor, B.floor, bs.t);
       const floorA = A.floorAlpha + (B.floorAlpha - A.floorAlpha) * bs.t;
 
-      if (o > 0.03) {
-        // Wolna przestrzeń: tylko delikatne zabarwienie podłoża biomu.
-        d[p] = floor[0];
-        d[p + 1] = floor[1];
-        d[p + 2] = floor[2];
-        d[p + 3] = floorA * 255;
-        continue;
-      }
+      // Gradient (Sobel, na piksel świata) — wskazuje kierunek ku wolnej przestrzeni; |g| daje odległość od krawędzi.
+      const gx = (nxt[c + 1] + 2 * cur[c + 1] + prev[c + 1] - nxt[c - 1] - 2 * cur[c - 1] - prev[c - 1]) / (8 * STEP);
+      const gy = (nxt[c - 1] + 2 * nxt[c] + nxt[c + 1] - prev[c - 1] - 2 * prev[c] - prev[c + 1]) / (8 * STEP);
+      const gm = Math.max(Math.hypot(gx, gy), 1e-6);
+      const dirx = gx / gm;
+      const diry = gy / gm;
+      const dist = Math.abs(o) / gm; // odległość od krawędzi w px świata
 
-      // Cień rzucany przez ścianę na podłoże.
-      const shadowA = o > 0 ? (1 - o / 0.03) ** 2 * 0.55 : 0.55;
-      if (o >= 0) {
+      if (o > 0) {
+        // Wolna przestrzeń: delikatne zabarwienie podłoża + miękki cień ściany (padający w prawo-dół).
+        let shadowA = 0;
+        if (dist < 140) {
+          const facing = dirx * 0.64 + diry * 0.77;
+          shadowA = Math.exp(-dist / 30) * 0.5 * Math.min(1.2, Math.max(0.35, 0.8 + 0.5 * facing));
+        }
         const sa = shadowA + floorA * (1 - shadowA);
+        if (sa < 0.004) {
+          d[p + 3] = 0;
+          continue;
+        }
         d[p] = (22 * shadowA + floor[0] * floorA * (1 - shadowA)) / sa;
         d[p + 1] = (2 * shadowA + floor[1] * floorA * (1 - shadowA)) / sa;
         d[p + 2] = (10 * shadowA + floor[2] * floorA * (1 - shadowA)) / sa;
@@ -199,27 +219,61 @@ export class WallLayer {
       const deep = mixRgb(A.wallDeep, B.wallDeep, bs.t);
       const mid = mixRgb(A.wallMid, B.wallMid, bs.t);
       const rimC = mixRgb(A.rim, B.rim, bs.t);
-      const depth = Math.min(1, -o / 0.12);
-      const rim = 1 - smooth(0, 0.018, -o);
-      // Światło z lewego górnego rogu: porównanie z sąsiadem (wiersz wyżej, kolumna w lewo).
-      const lit = Math.max(-1, Math.min(1, (job.prev[px] - o) * 60));
-      const fiber = 0.92 + 0.08 * perlin(wx * 0.016, wy * 0.006, 91) + 0.08 * perlin(wx * 0.03, wy * 0.03, 92);
-      const grain = ((Math.imul(px * 73856093 ^ py * 19349663 ^ (i * 83492791 + j), 2654435761) >>> 24) / 255 - 0.5) * 10;
+      const depthK = smooth(0, 70, dist);
 
-      let r = (mid[0] + (deep[0] - mid[0]) * depth) * fiber;
-      let g = (mid[1] + (deep[1] - mid[1]) * depth) * fiber;
-      let b = (mid[2] + (deep[2] - mid[2]) * depth) * fiber;
-      const rimK = rim * (0.65 + 0.35 * lit);
-      r += (rimC[0] - r) * rimK;
-      g += (rimC[1] - g) * rimK;
-      b += (rimC[2] - b) * rimK;
+      // Normalna: zaokrąglona krawędź (bevel) wygasająca w głąb ściany.
+      const slope = 1.35 * Math.exp(-dist / 15);
+      const inv = 1 / Math.hypot(dirx * slope, diry * slope, 1);
+      const nx = dirx * slope * inv;
+      const ny = diry * slope * inv;
+      const nz = inv;
+      const diff = Math.max(0, nx * LX + ny * LY + nz * LZ) / Math.hypot(LX, LY, LZ);
+      // Wilgotny połysk (Blinn-Phong, półwektor ~ światło + widz z góry).
+      const hx = LX, hy = LY, hz = LZ + 1;
+      const hl = Math.hypot(hx, hy, hz);
+      const nh = Math.max(0, (nx * hx + ny * hy + nz * hz) / hl);
+      const spec = nh ** 28 * 0.5 * (0.4 + 0.6 * (1 - smooth(0, 40, dist)));
 
-      // Wygładzona krawędź: mieszanie ze cieniem (szerokość dobrana pod cienkie ścianki płuc).
-      const a = Math.min(1, -o / 0.012);
-      d[p] = r * a + 22 * (1 - a) + grain;
-      d[p + 1] = g * a + 2 * (1 - a) + grain * 0.5;
-      d[p + 2] = b * a + 10 * (1 - a) + grain * 0.5;
-      d[p + 3] = (a + shadowA * (1 - a)) * 255;
+      // Faktura: plamista tkanka + włókna + sieć naczyń włosowatych.
+      const mottle = 0.5 + 0.5 * perlin(wx * 0.011, wy * 0.011, 91);
+      const cells = perlin(wx * 0.05, wy * 0.05, 92);
+      const fiber = 0.9 + 0.1 * mottle + 0.05 * cells;
+      const vein = 1 - Math.abs(perlin(wx * 0.014 + 5, wy * 0.014 - 3, 93));
+      const capillary = smooth(0.93, 0.99, vein) * (1 - depthK * 0.5);
+      const grain = ((Math.imul(px * 73856093 ^ py * 19349663 ^ (i * 83492791 + j), 2654435761) >>> 24) / 255 - 0.5) * 6;
+
+      let r = (mid[0] + (deep[0] - mid[0]) * depthK) * fiber;
+      let g = (mid[1] + (deep[1] - mid[1]) * depthK) * fiber;
+      let b = (mid[2] + (deep[2] - mid[2]) * depthK) * fiber;
+      // Naczynia włosowate: ciemniejsza, bardziej czerwona sieć pod powierzchnią.
+      r += (r * 0.8 + 20 - r) * capillary * 0.22;
+      g += (g * 0.35 - g) * capillary * 0.3;
+      b += (b * 0.45 - b) * capillary * 0.3;
+
+      // Oświetlenie.
+      const shade = 0.62 + 0.62 * diff;
+      r *= shade;
+      g *= shade;
+      b *= shade;
+      // Prześwitywanie (subsurface): ciepły, jasny pas tuż przy krawędzi + cienka błona śluzowa.
+      const sss = Math.exp(-dist / 9) * 0.38;
+      const membrane = 1 - smooth(0, 3.2, dist);
+      const k = Math.min(1, sss * (0.6 + 0.4 * diff) + membrane * 0.35);
+      r += (rimC[0] - r) * k;
+      g += (rimC[1] - g) * k;
+      b += (rimC[2] - b) * k;
+      const sp = spec * 255;
+      r += sp * 0.9 + grain;
+      g += sp * 0.85 + grain * 0.6;
+      b += sp * 0.8 + grain * 0.6;
+
+      // Gładka krawędź: antyaliasing po odległości (miękkie mieszanie ze cieniem).
+      const a = smooth(0, 3.6, dist);
+      const shadowEdge = 0.5;
+      d[p] = r * a + 22 * (1 - a);
+      d[p + 1] = g * a + 2 * (1 - a);
+      d[p + 2] = b * a + 10 * (1 - a);
+      d[p + 3] = (a + shadowEdge * (1 - a)) * 255;
     }
   }
 }
