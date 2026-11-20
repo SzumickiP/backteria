@@ -1,4 +1,4 @@
-import { START_POINT, bodyDist, regionAt, type RegionSample } from './animal';
+import { bodyDist, currentAnimal, regionAt, type RegionSample } from './animal';
 import type { BiomeId } from './biomes';
 
 /**
@@ -138,6 +138,8 @@ export function opennessIn(x: number, y: number, s: BiomeSample): number {
   let o = OPEN[s.a](x, y);
   // Płynne przejście kształtu ścian na granicy biomów.
   if (s.t >= 0.01) o = o * (1 - s.t) + OPEN[s.b](x, y) * s.t;
+  // Kanały układów (naczynia, przewód pokarmowy, tchawica, rdzeń) — zawsze przejezdne.
+  o = Math.max(o, s.channel);
   return Math.min(o, skin);
 }
 
@@ -154,7 +156,7 @@ export function blockedCircle(x: number, y: number, r: number): boolean {
 }
 
 /** Najbliższe miejsce startu (spirala od punktu 0,0), gdzie zmieści się koło o promieniu r. */
-export function findOpenSpot(r: number, cx = START_POINT.x, cy = START_POINT.y): { x: number; y: number } {
+export function findOpenSpot(r: number, cx = currentAnimal().start.x, cy = currentAnimal().start.y): { x: number; y: number } {
   for (let i = 0; i < 4000; i++) {
     const a = i * 0.7;
     const d = i * 6;

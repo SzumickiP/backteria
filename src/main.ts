@@ -8,6 +8,7 @@ import { GameScene } from './scenes/GameScene';
 import { MenuScene } from './scenes/MenuScene';
 import { SettingsScene } from './scenes/SettingsScene';
 import { UIScene } from './scenes/UIScene';
+import { currentAnimal } from './world/animal';
 import { biomeAt, openness } from './world/walls';
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -40,7 +41,7 @@ function startGame(acc: Account): void {
   });
 
   // Tylko w trybie deweloperskim: dostęp do gry z konsoli przeglądarki (debugowanie, testy).
-  if (import.meta.env.DEV) Object.assign(window, { __backteria: game, __world: { biomeAt, openness }, __audio: audio });
+  if (import.meta.env.DEV) Object.assign(window, { __backteria: game, __world: { biomeAt, openness, currentAnimal }, __audio: audio });
 }
 
 // Dźwięk można włączyć dopiero po geście użytkownika (zasada przeglądarek).

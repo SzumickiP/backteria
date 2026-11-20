@@ -39,6 +39,7 @@ import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organ
 import { ACTIONS, isKey, settings, type Action } from '../settings';
 import { SPECIES, type SpeciesDef, type SpeciesId } from '../species';
 import { WallLayer } from '../world/WallLayer';
+import { setAnimal, type AnimalId } from '../world/animal';
 import { BIOMES, type BiomeId } from '../world/biomes';
 import { Navigator, avoidWalls } from '../world/navigation';
 import { biomeAt, blockedCircle, findOpenSpot, isWall } from '../world/walls';
@@ -143,7 +144,10 @@ export class GameScene extends Phaser.Scene {
   // Liczniki do osiągnięć (w tej grze).
   private infections = 0;
   private ordersGiven = new Set<ColonyOrder>();
+  /** odwiedzone układy narządów (osiągnięcie „Anatom”) */
   private visited = new Set<string>();
+  /** zwierzę, w którym toczy się gra */
+  animal: AnimalId = 'mouse';
   /** aktualny rozkaz dla kolonii */
   order: ColonyOrder = 'follow';
   private orderPoint: Point = { x: 0, y: 0 };
@@ -218,8 +222,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Scena jest restartowana na tej samej instancji — stan resetujemy tutaj. */
-  init(data: { species?: SpeciesId }): void {
+  init(data: { species?: SpeciesId; animal?: AnimalId }): void {
     this.species = SPECIES[data.species ?? this.species?.id ?? 'bacterium'];
+    // Zwierzę, w którym toczy się gra (świat, narządy, skóra).
+    this.animal = data.animal ?? this.animal ?? 'mouse';
+    setAnimal(this.animal);
     this.stats = { ...this.species.stats };
     this.allies = [];
     this.enemies = [];
@@ -1218,8 +1225,8 @@ export class GameScene extends Phaser.Scene {
 
     // Miejsce w ciele myszy (narząd / część ciała) i jego biom.
     const r = biomeAt(this.player.x, this.player.y);
-    this.visited.add(r.name);
-    if (['Mózg', 'Serce', 'Płuca', 'Jelita'].every((n) => this.visited.has(n))) this.achieve('anatomist');
+    if (r.system) this.visited.add(r.system);
+    if (this.visited.size >= 4) this.achieve('anatomist');
     if (r.name === 'Ogon') this.achieve('tail');
     if (r.name !== this.regionName) {
       const first = this.regionName === '';

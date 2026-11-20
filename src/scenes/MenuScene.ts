@@ -4,6 +4,7 @@ import { getAccount } from '../account/accounts';
 import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
 import { CHUNK } from '../config';
 import { isKey, keyLabel } from '../settings';
+import { ANIMALS, ANIMAL_ORDER, type AnimalId } from '../world/animal';
 import { GameEvents } from '../events';
 import { TEX, createTextures } from '../graphics/textures';
 import { SPECIES, type SpeciesId } from '../species';
@@ -31,14 +32,40 @@ export class MenuScene extends Phaser.Scene {
       .text(width / 2, height * 0.14, 'Backteria', { fontFamily: FONT, fontSize: '56px', fontStyle: 'bold', color: '#f5e9ee', stroke: '#1c0a10', strokeThickness: 8 })
       .setOrigin(0.5);
     this.add
-      .text(width / 2, height * 0.14 + 52, 'Wnętrze myszy czeka — wybierz, kim chcesz zagrać', { fontFamily: FONT, fontSize: '18px', color: '#c29aa8' })
+      .text(width / 2, height * 0.14 + 46, 'Wybierz zwierzę (mapę) i to, kim chcesz zagrać', { fontFamily: FONT, fontSize: '18px', color: '#c29aa8' })
       .setOrigin(0.5);
+
+    // Wybór zwierzęcia — świat gry to jego wnętrze (układy narządów).
+    this.animal = loadAnimal();
+    const animY = height * 0.14 + 84;
+    const animDesc = this.add.text(width / 2, animY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8' }).setOrigin(0.5, 0);
+    const animBtns = ANIMAL_ORDER.map((id, i) => {
+      const b = this.add
+        .text(width / 2 + (i - 1) * 120, animY, ANIMALS[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      b.on('pointerdown', () => {
+        this.animal = id;
+        saveAnimal(id);
+        audio.sfx('click');
+        refreshAnimals();
+      });
+      return { id, b };
+    });
+    const refreshAnimals = () => {
+      for (const { id, b } of animBtns) {
+        const on = id === this.animal;
+        b.setColor(on ? '#1c0a10' : '#f5e9ee').setBackgroundColor(on ? '#6ee7b7' : '#2a1019');
+      }
+      animDesc.setText(`${ANIMALS[this.animal].inside}: ${ANIMALS[this.animal].description}`);
+    };
+    refreshAnimals();
 
     const narrow = width < 640;
     const cardW = narrow ? Math.min(340, width - 32) : 300;
     const cardH = narrow ? 250 : 330;
     const gap = 24;
-    const top = height * 0.14 + 100;
+    const top = height * 0.14 + 136;
 
     ORDER.forEach((id, i) => {
       const sp = SPECIES[id];
@@ -210,6 +237,28 @@ export class MenuScene extends Phaser.Scene {
   private pick(id: SpeciesId): void {
     if (this.achPanel) return; // lista osiągnięć otwarta
     audio.sfx('select');
-    this.scene.start('GameScene', { species: id });
+    this.scene.start('GameScene', { species: id, animal: this.animal });
+  }
+
+  private animal: AnimalId = 'mouse';
+}
+
+const ANIMAL_KEY = 'backteria.animal';
+
+function loadAnimal(): AnimalId {
+  try {
+    const v = localStorage.getItem(ANIMAL_KEY);
+    if (v && v in ANIMALS) return v as AnimalId;
+  } catch {
+    /* brak pamięci */
+  }
+  return 'mouse';
+}
+
+function saveAnimal(id: AnimalId): void {
+  try {
+    localStorage.setItem(ANIMAL_KEY, id);
+  } catch {
+    /* brak pamięci */
   }
 }

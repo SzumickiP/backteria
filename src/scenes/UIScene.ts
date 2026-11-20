@@ -8,7 +8,7 @@ import { GameEvents, type GameSummary, type MissionType } from '../events';
 import type { Mutation } from '../mutations';
 import { isKey, keyLabel, keyName, settings } from '../settings';
 import { SPECIES } from '../species';
-import { BODY_BOUNDS, BODY_PARTS, ORGANS, type Shape } from '../world/animal';
+import { SYSTEMS, currentAnimal, type Shape } from '../world/animal';
 import { BIOMES } from '../world/biomes';
 
 /** Kształt powiększony o `d` px (obrys skóry na dużej mapie). */
@@ -87,7 +87,7 @@ export class UIScene extends Phaser.Scene {
 
     const ev = this.game.events;
     const handlers: [string, (...args: never[]) => void][] = [
-      [GameEvents.BiomeChange, (name: string) => this.showBanner(name, 'Wnętrze myszy')],
+      [GameEvents.BiomeChange, (name: string) => this.showBanner(name, currentAnimal().inside)],
       [GameEvents.Achievement, (def: AchievementDef) => this.queueAchievement(def)],
       [GameEvents.Start, () => this.onStart()],
       [GameEvents.LevelUp, (choices: Mutation[], pending: number) => this.showMutations(choices, pending)],
@@ -210,18 +210,20 @@ export class UIScene extends Phaser.Scene {
     }
     audio.sfx('click');
     const { width, height } = this.scale;
-    const B = BODY_BOUNDS;
+    const animal = currentAnimal();
+    const B = animal.bounds;
     const pad = 30;
-    const k = Math.min((width - pad * 2) / (B.maxX - B.minX), (height - pad * 2 - 50) / (B.maxY - B.minY));
+    // Miejsce na tytuł u góry (50 px) i legendę u dołu (40 px).
+    const k = Math.min((width - pad * 2) / (B.maxX - B.minX), (height - pad * 2 - 90) / (B.maxY - B.minY));
     const ox = (width - (B.maxX - B.minX) * k) / 2 - B.minX * k;
-    const oy = 50 + (height - 50 - (B.maxY - B.minY) * k) / 2 - B.minY * k;
+    const oy = 50 + (height - 90 - (B.maxY - B.minY) * k) / 2 - B.minY * k;
     this.bigMapView = { ox, oy, k };
 
     const c = this.add.container(0, 0).setDepth(140);
     c.add(this.add.rectangle(0, 0, width, height, 0x0d0408, 0.88).setOrigin(0));
     c.add(
       this.add
-        .text(width / 2, 14, `Wnętrze myszy   ·   ${keyLabel('map')} — zamknij`, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: TEXT })
+        .text(width / 2, 14, `${animal.inside}   ·   ${keyLabel('map')} — zamknij`, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: TEXT })
         .setOrigin(0.5, 0),
     );
 
@@ -251,27 +253,37 @@ export class UIScene extends Phaser.Scene {
       g.fillCircle(bx, by, rb);
     };
     // Skóra (obrys) i tkanka.
-    for (const p of BODY_PARTS) for (const s of p.shapes) shape(grow(s, 260), 0xf0a0b0, 0.9);
-    for (const p of BODY_PARTS) for (const s of p.shapes) shape(s, 0x7a2840);
-    // Narządy.
-    for (const o of [...ORGANS].reverse()) for (const s of o.shapes) shape(s, o.color, 0.95);
+    for (const p of animal.parts) for (const s of p.shapes) shape(grow(s, 260), 0xf0a0b0, 0.9);
+    for (const p of animal.parts) for (const s of p.shapes) shape(s, 0x7a2840);
+    // Narządy w kolorach układów (od najmniej ważnych — na wierzchu te o pierwszeństwie).
+    for (const o of [...animal.organs].reverse()) {
+      const color = o.name === 'Serce' ? 0xff3b3b : SYSTEMS[o.system].color;
+      for (const s of o.shapes) shape(s, color, o.channel ? 0.85 : 0.95);
+    }
     c.add(g);
 
-    // Podpisy.
-    const label = (text: string, x: number, y: number) =>
+    // Podpisy narządów.
+    for (const o of animal.organs) {
+      if (o.label === null) continue;
+      const s = o.shapes[0];
+      const [lx, ly] = o.label ?? (s.kind === 'ellipse' ? [s.x, s.y] : [(s.ax + s.bx) / 2, (s.ay + s.by) / 2]);
       c.add(
         this.add
-          .text(ox + x * k, oy + y * k, text, { fontFamily: FONT, fontSize: '13px', color: '#ffffff', stroke: '#1c0a10', strokeThickness: 4 })
+          .text(ox + lx * k, oy + ly * k, o.name, { fontFamily: FONT, fontSize: '12px', color: '#ffffff', stroke: '#1c0a10', strokeThickness: 4 })
           .setOrigin(0.5),
       );
-    label('Mózg', -16600, 0);
-    label('Serce', -4300, 900);
-    label('Płuca', -5600, -3500);
-    label('Płuca', -5600, 3600);
-    label('Jelita', 5600, 300);
-    label('Ogon', 26000, 4300);
-    label('Łapa', -9500, -12800);
-    label('Łapa', 10200, 13300);
+    }
+
+    // Legenda układów.
+    const systems = Object.values(SYSTEMS);
+    const legendW = 170;
+    let lx = width / 2 - (systems.length * legendW) / 2;
+    for (const sys of systems) {
+      const sq = this.add.rectangle(lx, height - 22, 14, 14, sys.color).setOrigin(0, 0.5);
+      const t = this.add.text(lx + 20, height - 22, sys.name, { fontFamily: FONT, fontSize: '13px', color: TEXT }).setOrigin(0, 0.5);
+      c.add([sq, t]);
+      lx += legendW;
+    }
 
     this.bigMapDots = this.add.graphics();
     c.add(this.bigMapDots);
@@ -745,7 +757,7 @@ export class UIScene extends Phaser.Scene {
   private restart(): void {
     this.overlay?.destroy();
     this.overlay = undefined;
-    this.gs.scene.restart({ species: this.gs.species.id });
+    this.gs.scene.restart({ species: this.gs.species.id, animal: this.gs.animal });
   }
 
   private toMenu(): void {
