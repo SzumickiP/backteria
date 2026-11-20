@@ -9,6 +9,7 @@ import {
   ENEMY_DESPAWN_RADIUS,
   DIFFICULTY,
   GAME_MODES,
+  ENEMY_COUNT_MUL,
   type GameModeId,
   DNA,
   PROGRESSION,
@@ -1352,7 +1353,7 @@ export class GameScene extends Phaser.Scene {
 
     const p = this.openPoint(this.player, 950, 1200, 30);
     if (!p) return; // spróbujemy w następnej klatce
-    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat) * GAME_MODES[this.mode].spawnMul;
+    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat) * GAME_MODES[this.mode].spawnMul / ENEMY_COUNT_MUL;
     // Strefa zarażona: wrogowie rzadziej i nigdy w samej strefie.
     if (inStartZone(this.player.x, this.player.y)) this.spawnTimer *= START_ZONE.spawnSlowdown;
     if (inStartZone(p.x, p.y)) return;
@@ -1634,7 +1635,7 @@ export class GameScene extends Phaser.Scene {
   /** Limit wrogów naraz przy obecnym zagrożeniu. */
   private get maxEnemies(): number {
     const D = DIFFICULTY;
-    return Math.round(Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(this.threat * D.maxAlivePerThreat)) * GAME_MODES[this.mode].maxMul);
+    return Math.round(Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(this.threat * D.maxAlivePerThreat)) * GAME_MODES[this.mode].maxMul * ENEMY_COUNT_MUL);
   }
 
   // ───────────────────────── walka i infekcja ─────────────────────────

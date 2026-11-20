@@ -140,3 +140,6 @@ export const GAME_MODES: Record<GameModeId, { name: string; description: string;
   normal: { name: 'Normalny', description: 'Zbalansowana rozgrywka.', threatRate: 1, spawnMul: 1, maxMul: 1 },
   hard: { name: 'Trudny', description: 'Zagrożenie rośnie szybko, wrogów jest więcej.', threatRate: 1.6, spawnMul: 0.7, maxMul: 1.35 },
 };
+
+/** Mnożnik liczby atakujących (0.65 = o 35% mniej wrogów: niższy limit i rzadszy spawn). */
+export const ENEMY_COUNT_MUL = 0.65;
