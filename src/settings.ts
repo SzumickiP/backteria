@@ -69,14 +69,12 @@ export const RESERVED = new Set(['Digit1', 'Digit2', 'Digit3', 'Numpad1', 'Numpa
 
 interface Settings {
   keys: Record<Action, string[]>;
-  /** czy postać płynie za kursorem myszy */
-  mouseFollow: boolean;
 }
 
 const STORAGE_KEY = 'backteria.settings';
 
 function defaults(): Settings {
-  return { keys: structuredClone(DEFAULT_KEYS), mouseFollow: true };
+  return { keys: structuredClone(DEFAULT_KEYS) };
 }
 
 function load(): Settings {
@@ -84,7 +82,6 @@ function load(): Settings {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<Settings> | null;
     if (raw?.keys) for (const a of ACTIONS) if (Array.isArray(raw.keys[a])) s.keys[a] = [raw.keys[a][0] ?? '', raw.keys[a][1] ?? ''];
-    if (typeof raw?.mouseFollow === 'boolean') s.mouseFollow = raw.mouseFollow;
   } catch {
     /* uszkodzone ustawienia — domyślne */
   }
@@ -104,7 +101,6 @@ export function saveSettings(): void {
 export function resetSettings(): void {
   const d = defaults();
   settings.keys = d.keys;
-  settings.mouseFollow = d.mouseFollow;
   saveSettings();
 }
 

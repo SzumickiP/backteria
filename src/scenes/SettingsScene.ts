@@ -15,7 +15,6 @@ export class SettingsScene extends Phaser.Scene {
   private listening?: { action: Action; slot: 0 | 1 };
   private slotTexts = new Map<string, Phaser.GameObjects.Text>();
   private info!: Phaser.GameObjects.Text;
-  private mouseText!: Phaser.GameObjects.Text;
   private soundText!: Phaser.GameObjects.Text;
 
   constructor() {
@@ -64,12 +63,6 @@ export class SettingsScene extends Phaser.Scene {
 
     // Opcje.
     y += 12;
-    this.mouseText = this.button(width / 2, y, '', () => {
-      settings.mouseFollow = !settings.mouseFollow;
-      saveSettings();
-      this.refresh();
-    });
-    y += 34;
     this.soundText = this.button(width / 2, y, '', () => {
       audio.cycleMode();
       this.refresh();
@@ -141,7 +134,6 @@ export class SettingsScene extends Phaser.Scene {
           : 'Kliknij pole klawisza, żeby je zmienić.  1 / 2 / 3 są zarezerwowane do wyborów w grze.',
       )
       .setColor(MUTED);
-    this.mouseText.setText(`Postać płynie za kursorem myszy: ${settings.mouseFollow ? 'TAK' : 'NIE'}`);
     this.soundText.setText(`Dźwięk: ${SOUND_MODE_NAMES[audio.mode]}`);
   }
 
