@@ -39,6 +39,7 @@ import { Organ } from '../entities/Organ';
 import { Prey } from '../entities/Prey';
 import { Structure, type StructureKind } from '../entities/Structure';
 import { GameEvents, type GameSummary, type MissionType } from '../events';
+import { net, type NetLink, type SnapObj, type ToHost } from '../net/link';
 import { drawFeelers, drawOrganelles } from '../graphics/organelleDraw';
 import { applyBody, bodyStretch, body, loadBody } from '../body';
 import { TEX, TEX_RADIUS, createTextures } from '../graphics/textures';
@@ -78,6 +79,16 @@ interface Mote {
   by: number;
   /** współczynnik paralaksy (>1 = bliżej obiektywu) */
   f: number;
+}
+
+/** Gość z gry wieloosobowej widziany po stronie gospodarza. */
+interface Remote {
+  link: NetLink;
+  cell?: Cell;
+  dx: number;
+  dy: number;
+  /** sekundy do odrodzenia (0 = żyje) */
+  respawn: number;
 }
 
 interface Mission {
@@ -138,7 +149,7 @@ export interface MissionInfo {
 const CONQUEST_PER_ORGAN = 6;
 
 /** Wielka misja bakterii „Mnożenie się”: czas podziału matki (s). */
-const MULTIPLY_TIME = 50;
+const MULTIPLY_TIME = 75;
 
 const TAU = Math.PI * 2;
 const MOVE_ACTIONS: Action[] = ['up', 'down', 'left', 'right'];
@@ -238,6 +249,12 @@ export class GameScene extends Phaser.Scene {
   private dashHits = new Set<Cell>();
   /** ostatni kierunek ruchu — celowanie przy sterowaniu klawiaturą */
   private aim: Point = { x: 0, y: -1 };
+  /** gra wieloosobowa (gospodarz): zdalni gracze to komórki w `allies`, sterowane przez gościa */
+  private remotes: Remote[] = [];
+  private remoteCells = new Set<Cell>();
+  private netTimer = 0;
+  private nids = new WeakMap<object, number>();
+  private nextNid = 1;
   private spawnTimer = 0;
   /** zdarzenia w organizmie gospodarza: czas do następnego, aktywne (nazwa i czas) oraz ich modyfikatory */
   private hostEventIn = 40;
@@ -356,6 +373,9 @@ export class GameScene extends Phaser.Scene {
     this.cloakCd = 0;
     this.stats = { ...this.species.stats };
     this.allies = [];
+    this.remotes = [];
+    this.remoteCells = new Set();
+    this.netTimer = 0;
     this.enemies = [];
     this.nutrients = [];
     this.hostCells = [];
@@ -466,6 +486,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.setupInput();
+    this.setupNet();
 
     if (!this.scene.isActive('UIScene')) this.scene.launch('UIScene');
     this.game.events.emit(GameEvents.Start);
@@ -515,6 +536,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.movePlayer(dt);
+    this.updateRemotes(dt);
     this.updateHostCells();
     if (this.isVirus) this.updatePrey(dt);
     else this.updateNutrients(dt);
@@ -547,8 +569,128 @@ export class GameScene extends Phaser.Scene {
     if (this.species.rod) drawFeelers(this.organelleGfx, pl.x, pl.y, pl.radius, pl.rotation, this.elapsed);
     drawOrganelles(this.organelleGfx, pl.x, pl.y, pl.radius, pl.rotation, this.species.rod, this.organelles, this.organelleDefs, this.elapsed);
     this.drawBars();
+    this.netTick(dt);
 
     if (!this.offerOpen && this.pendingLevelUps > 0) this.offerMutation();
+  }
+
+  // ───────────────────────── gra wieloosobowa (gospodarz) ─────────────────────────
+
+  /** Podpina połączenia z gośćmi i wysyła im planszę. */
+  private setupNet(): void {
+    if (net.mode !== 'host') return;
+    this.remotes = net.links.map((link) => ({ link, dx: 0, dy: 0, respawn: 0 }));
+    for (const r of this.remotes) {
+      r.link.onMessage = (m) => {
+        const msg = m as ToHost;
+        if (msg.t === 'in') {
+          r.dx = Phaser.Math.Clamp(msg.dx, -1, 1);
+          r.dy = Phaser.Math.Clamp(msg.dy, -1, 1);
+        } else if (msg.t === 'hello') {
+          r.link.nick = msg.nick;
+        }
+      };
+      r.link.send({ t: 'init', animal: this.animal, zone: startZone(), species: this.species.id });
+      this.spawnRemote(r);
+    }
+  }
+
+  private spawnRemote(r: Remote): void {
+    const p = this.openPoint(this.player, 30, 90, 14) ?? { x: this.player.x, y: this.player.y };
+    const c = new Cell(this, p.x, p.y, this.species.allyRadius * 1.25, this.species.allyTexture, this.species.texRadius, this.stats.maxHp).setDepth(4.2);
+    c.baseTint = 0x93c5fd;
+    c.resetTint();
+    c.damageMul = 1.6;
+    this.allies.push(c);
+    this.remoteCells.add(c);
+    r.cell = c;
+    r.respawn = 0;
+    this.ringFx(c.x, c.y, 0x93c5fd, c.radius * 4);
+  }
+
+  private updateRemotes(dt: number): void {
+    for (const r of this.remotes) {
+      if (r.link.closed) {
+        if (r.cell) r.cell.hp = 0; // gość wyszedł — jego komórka ginie
+        r.cell = undefined;
+        continue;
+      }
+      const c = r.cell;
+      if (c && c.active && c.isAlive) {
+        const len = Math.hypot(r.dx, r.dy);
+        if (len > 0.01) c.tryMove((r.dx / len) * this.stats.speed * 1.1 * dt, (r.dy / len) * this.stats.speed * 1.1 * dt);
+        c.hp = Math.min(c.maxHp, c.hp + this.stats.regen * dt);
+        if (this.species.rod) c.faceMovement(dt);
+        else c.rotation += dt * 1.5;
+      } else if (!c) {
+        // martwy gość odradza się przy graczu gospodarza
+        r.respawn -= dt;
+        if (r.respawn <= 0) this.spawnRemote(r);
+      }
+    }
+  }
+
+  private nidOf(o: object): number {
+    let id = this.nids.get(o);
+    if (!id) {
+      id = this.nextNid++;
+      this.nids.set(o, id);
+    }
+    return id;
+  }
+
+  /** Wysyła gościom migawkę świata (~20 razy na sekundę). */
+  private netTick(dt: number): void {
+    if (!this.remotes.length) return;
+    this.netTimer -= dt;
+    if (this.netTimer > 0) return;
+    this.netTimer = 0.05;
+    const bulletImgs = new Set<object>(this.projectiles.map((p) => p.img));
+    const round = (n: number) => Math.round(n * 10) / 10;
+    const players = ['Gospodarz', ...this.remotes.filter((r) => !r.link.closed).map((r) => r.link.nick || 'gracz')];
+
+    for (const r of this.remotes) {
+      if (!r.link.open) continue;
+      const me: Point = r.cell ?? this.player;
+      const objs: SnapObj[] = [];
+      for (const o of this.children.list) {
+        const isCell = o instanceof Cell;
+        if (!(isCell || o instanceof Nutrient || bulletImgs.has(o))) continue;
+        const img = o as Phaser.GameObjects.Image;
+        if (!img.visible || !img.active) continue;
+        if (Math.abs(img.x - me.x) > 1300 || Math.abs(img.y - me.y) > 1000) continue;
+        const hp = isCell && o.hp < o.maxHp && o.maxHp > 0 ? Math.max(0, o.hp / o.maxHp) : -1;
+        objs.push([
+          this.nidOf(img),
+          round(img.x),
+          round(img.y),
+          Math.round(img.rotation * 100) / 100,
+          Math.round(img.scaleX * 1000) / 1000,
+          Math.round(img.scaleY * 1000) / 1000,
+          img.texture.key,
+          img.isTinted ? img.tintTopLeft : -1,
+          Math.round(img.alpha * 100) / 100,
+          img.blendMode as number,
+          img.depth,
+          hp < 0 ? -1 : Math.round(hp * 100) / 100,
+        ]);
+      }
+      r.link.send({
+        t: 'snap',
+        you: r.cell ? this.nidOf(r.cell) : -1,
+        respawn: Math.max(0, r.respawn),
+        hp: r.cell?.hp ?? 0,
+        maxHp: r.cell?.maxHp ?? this.stats.maxHp,
+        level: this.level,
+        time: this.elapsed,
+        players,
+        objs,
+      });
+    }
+  }
+
+  private netOver(text: string): void {
+    for (const r of this.remotes) r.link.send({ t: 'over', text });
   }
 
   /** Wywoływane przez UIScene po wybraniu mutacji. Gra toczy się dalej (bez pauzy). */
@@ -1205,6 +1347,7 @@ export class GameScene extends Phaser.Scene {
     const slotBase = focus && this.allies.length ? Math.atan2(this.allies[0].y - focus.y, this.allies[0].x - focus.x) : 0;
 
     this.allies.forEach((a, i) => {
+      if (this.remoteCells.has(a)) return; // zdalny gracz steruje sobą sam
       if (a === this.mission?.mother) {
         // Matka (misja mnożenia) płynie sama za graczem, niezależnie od rozkazów.
         const mf = this.waypoint(a, { x: p.x + Math.cos(back) * (p.radius + a.radius + 24), y: p.y + Math.sin(back) * (p.radius + a.radius + 24) });
@@ -1953,6 +2096,12 @@ export class GameScene extends Phaser.Scene {
 
     this.allies = this.allies.filter((a) => {
       if (a.hp > 0) return true;
+      const rem = this.remotes.find((x) => x.cell === a);
+      if (rem) {
+        rem.cell = undefined;
+        rem.respawn = 6;
+      }
+      this.remoteCells.delete(a);
       this.burst(a.x, a.y, this.isVirus ? COLORS.burstCopy : COLORS.burstAlly, 6);
       a.destroy();
       return false;
@@ -2133,8 +2282,11 @@ export class GameScene extends Phaser.Scene {
         // Patogeny napierają na matkę, póki trwa podział.
         m.spawnTimer -= dt;
         if (m.spawnTimer <= 0 && m.timeLeft > 4) {
-          m.spawnTimer = Math.max(1.8, 3.4 - this.threat * 0.12);
-          this.spawnGuard(Math.random() < Math.min(0.4, 0.08 * this.threat) ? 'germ' : 'virus', mo);
+          m.spawnTimer = Math.max(1.0, 2.2 - this.threat * 0.1);
+          const wave = Math.random() < 0.35 ? 2 : 1;
+          for (let i = 0; i < wave; i++) {
+            this.spawnGuard(Math.random() < Math.min(0.55, 0.15 + 0.08 * this.threat) ? 'germ' : 'virus', mo);
+          }
         }
         mo.setPulse(1 + Math.sin(this.elapsed * 8) * 0.08 * (1 - m.timeLeft / MULTIPLY_TIME + 0.3));
         if (m.timeLeft <= 0) this.endMission(true);
@@ -2228,7 +2380,7 @@ export class GameScene extends Phaser.Scene {
     // Wielka misja bakterii: mnożenie się — potrzebuje kogoś z kolonii (nie przyjaciela na czas).
     const motherPick = this.isVirus || this.lastMissionType === 'multiply'
       ? undefined
-      : Phaser.Utils.Array.GetRandom(this.allies.filter((a) => a.isAlive && !this.allyExpire.has(a)));
+      : Phaser.Utils.Array.GetRandom(this.allies.filter((a) => a.isAlive && !this.allyExpire.has(a) && !this.remoteCells.has(a)));
     if (motherPick && Math.random() < 0.3) type = 'multiply';
     const base = { type, count: 0, goal: 0, spawnTimer: 2, fireTimer: 0 };
     let subtitle = '';
@@ -2242,11 +2394,11 @@ export class GameScene extends Phaser.Scene {
         const hp = type === 'defend' ? 220 : Math.round(260 * (1 + 0.1 * (this.threat - 1)));
         const organ = new Organ(this, p.x, p.y, 48, hp);
         if (type === 'defend') {
-          this.mission = { ...base, title: 'Obroń narząd', organ, timeLeft: 35 };
+          this.mission = { ...base, title: 'Obroń narząd', organ, timeLeft: 50 };
           subtitle = 'Leć za strzałką i obroń go';
           for (let i = 0; i < 4; i++) this.spawnAttacker(organ);
         } else {
-          this.mission = { ...base, title: 'Zainfekuj narząd', organ, timeLeft: 45 };
+          this.mission = { ...base, title: 'Zainfekuj narząd', organ, timeLeft: 65 };
           subtitle = 'Zainfekuj narząd, zanim upłynie czas';
           const leukos = Math.min(5, 1 + Math.floor(this.threat / 2));
           for (let i = 0; i < leukos; i++) this.spawnGuard('leukocyte', organ);
@@ -2263,7 +2415,7 @@ export class GameScene extends Phaser.Scene {
           nest.resetTint();
         }
         const title = this.isVirus ? 'Zniszcz węzeł chłonny' : 'Zniszcz ognisko infekcji';
-        this.mission = { ...base, title, nest, timeLeft: 50, spawnTimer: 1 };
+        this.mission = { ...base, title, nest, timeLeft: 75, spawnTimer: 1 };
         subtitle = 'Gniazdo wypuszcza wrogów — zniszcz je na czas';
         for (let i = 0; i < 3; i++) this.spawnGuard(this.isVirus ? 'antibody' : 'virus', nest);
         break;
@@ -2283,21 +2435,21 @@ export class GameScene extends Phaser.Scene {
           for (const it of items) it.destroy();
           return this.retryMissionSoon();
         }
-        this.mission = { ...base, title: 'Zbierz rzadkie składniki', items, goal: items.length, timeLeft: 40 };
+        this.mission = { ...base, title: 'Zbierz rzadkie składniki', items, goal: items.length, timeLeft: 60 };
         subtitle = `Złote cząstki — zbierz wszystkie (${items.length}) na czas`;
         break;
       }
       case 'outbreak':
-        this.mission = { ...base, title: 'Wywołaj epidemię', goal: 10, timeLeft: 45 };
-        subtitle = 'Zaraź 10 komórek w 45 sekund';
+        this.mission = { ...base, title: 'Wywołaj epidemię', goal: 10, timeLeft: 65 };
+        subtitle = 'Zaraź 10 komórek w 65 sekund';
         break;
       case 'multiply': {
         // Jedna z kolonii staje się silniejszą „matką”: sama płynie za graczem, ale nie słucha rozkazów.
         const mother = motherPick!;
         mother.setRadius(this.species.allyRadius * 1.6);
-        mother.maxHp = this.stats.allyMaxHp * 4;
+        mother.maxHp = this.stats.allyMaxHp * 2.2;
         mother.hp = mother.maxHp;
-        mother.damageMul = 2.5;
+        mother.damageMul = 1.5;
         mother.setTint(0x6ee7b7);
         this.ringFx(mother.x, mother.y, 0x6ee7b7, mother.radius * 4);
         this.mission = { ...base, title: 'Mnożenie się', mother, timeLeft: MULTIPLY_TIME, spawnTimer: 3 };
@@ -2653,6 +2805,7 @@ export class GameScene extends Phaser.Scene {
       kills: this.kills,
       missions: this.missionsDone,
     };
+    this.netOver(`Gospodarz zginął. Czas: ${Math.floor(this.elapsed)} s, poziom ${this.level}.`);
     this.game.events.emit(GameEvents.GameOver, summary);
   }
 
