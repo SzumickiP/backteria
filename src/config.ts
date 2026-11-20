@@ -143,3 +143,21 @@ export const GAME_MODES: Record<GameModeId, { name: string; description: string;
 
 /** Mnożnik liczby atakujących (0.65 = o 35% mniej wrogów: niższy limit i rzadszy spawn). */
 export const ENEMY_COUNT_MUL = 0.65;
+
+/** Wyzwanie „boss”: pojawia się dopiero, gdy gracz jest dość rozwinięty. */
+export const BOSS = {
+  /** poziom gracza, od którego pojawia się pierwszy boss */
+  minLevel: 8,
+  /** o ile poziomów więcej potrzeba na kolejnego bossa */
+  levelStep: 6,
+  /** najwcześniejszy czas pierwszego bossa (s) */
+  minTime: 150,
+  /** odległość od gracza, w której boss losuje miejsce (px) */
+  minDist: 1500,
+  maxDist: 2600,
+  /** co ile sekund przywołuje sługi i ilu naraz najwyżej */
+  summonEvery: 8,
+  maxMinions: 6,
+  /** nagroda w DNA */
+  dna: 4,
+};

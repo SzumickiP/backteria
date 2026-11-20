@@ -52,6 +52,7 @@ export class UIScene extends Phaser.Scene {
   private statsText!: Phaser.GameObjects.Text;
   private rightText!: Phaser.GameObjects.Text;
   private missionText!: Phaser.GameObjects.Text;
+  private bossText!: Phaser.GameObjects.Text;
   private arrowText!: Phaser.GameObjects.Text;
   private hint!: Phaser.GameObjects.Text;
   /** podpisy slotów umiejętności: [klawisz, nazwa, czas] × 3 */
@@ -90,6 +91,7 @@ export class UIScene extends Phaser.Scene {
     this.statsText = this.add.text(16, 50, '', { ...base, fontSize: '15px', lineSpacing: 4 });
     this.rightText = this.add.text(0, 16, '', { ...base, fontSize: '15px', align: 'right', lineSpacing: 4 }).setOrigin(1, 0);
     this.missionText = this.add.text(0, 16, '', { ...base, fontSize: '16px', align: 'center', lineSpacing: 6 }).setOrigin(0.5, 0);
+    this.bossText = this.add.text(0, 0, '', { ...base, fontSize: '14px', color: '#fecaca', align: 'center' }).setOrigin(0.5, 0);
     this.arrowText = this.add.text(0, 0, '', { ...base, fontSize: '12px', color: '#fde68a' }).setOrigin(0.5);
     this.hint = this.add.text(16, 0, '', { ...base, fontSize: '13px', color: MUTED }).setOrigin(0, 1);
     this.slotTexts = [0, 1, 2].map(() => [
@@ -218,6 +220,7 @@ export class UIScene extends Phaser.Scene {
       .setPosition(width - 16, 16);
 
     this.updateMissionUi(width, height);
+    this.updateBossUi(width);
     this.updateMinimap(width, height);
     this.updateBigMap();
 
@@ -386,6 +389,13 @@ export class UIScene extends Phaser.Scene {
     for (const s of g.structures) dots.fillStyle(STRUCTURES[s.kind].tint, 1).fillRect(ox + s.x * k - 3, oy + s.y * k - 3, 6, 6);
     const m = g.missionInfo;
     if (m?.x !== undefined && m.y !== undefined) dots.fillStyle(missionColor(m.type), 1).fillCircle(ox + m.x * k, oy + m.y * k, 5);
+    const bs = g.bossInfo;
+    if (bs) {
+      const bx = ox + bs.x * k;
+      const by = oy + bs.y * k;
+      dots.fillStyle(0xdc2626, 1).fillCircle(bx, by, 8);
+      dots.lineStyle(2, 0xffffff, 1).strokeCircle(bx, by, 8);
+    }
     const fr = g.friendPos;
     if (fr) dots.fillStyle(0xfde68a, 1).fillCircle(ox + fr.x * k, oy + fr.y * k, 5);
     const pulse = 5 + Math.sin(this.time.now / 160) * 2;
@@ -486,6 +496,13 @@ export class UIScene extends Phaser.Scene {
       const c = clampIn(toMap(m.x, m.y));
       dots.fillStyle(missionColor(m.type), 1).fillCircle(c.x, c.y, pulse);
     }
+    // Boss — duży czerwony znacznik (przypięty do krawędzi minimapy, gdy jest poza nią).
+    const bs = g.bossInfo;
+    if (bs) {
+      const c = clampIn(toMap(bs.x, bs.y));
+      dots.fillStyle(0xdc2626, 1).fillCircle(c.x, c.y, pulse + 2);
+      dots.lineStyle(1.5, 0xffffff, 1).strokeCircle(c.x, c.y, pulse + 4);
+    }
     // Przyjazna postać — żółta gwiazdka.
     const fr = g.friendPos;
     if (fr) {
@@ -560,6 +577,27 @@ export class UIScene extends Phaser.Scene {
       .setVisible(true)
       .setText(`${Math.round(worldDist / 10)} µm`)
       .setPosition(ax - Math.cos(ang) * 34, ay - Math.sin(ang) * 34);
+  }
+
+  /** Pasek zdrowia bossa u góry ekranu (gdy boss żyje i jest w pobliżu). */
+  private updateBossUi(width: number): void {
+    const b = this.gs.bossInfo;
+    const d = b ? Math.hypot(b.x - this.gs.player.x, b.y - this.gs.player.y) : Infinity;
+    if (!b) {
+      this.bossText.setVisible(false);
+      return;
+    }
+    const w = Math.min(380, width - 40);
+    const x = width / 2 - w / 2;
+    const y = 74;
+    const frac = Phaser.Math.Clamp(b.hp / b.maxHp, 0, 1);
+    this.bossText.setVisible(true).setPosition(width / 2, y + 18).setText(
+      d < 1100 ? `${b.name} — ${Math.ceil(b.hp)} / ${b.maxHp}` : `${b.name} — ${Math.round(d / 10)} µm stąd (czerwony znacznik na mapie)`,
+    );
+    if (d < 1100) {
+      this.hud.fillStyle(0x000000, 0.6).fillRect(x - 2, y - 2, w + 4, 14);
+      this.hud.fillStyle(0xdc2626, 1).fillRect(x, y, w * frac, 10);
+    }
   }
 
   private onMissionStart(title: string, subtitle: string): void {

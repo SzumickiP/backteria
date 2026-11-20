@@ -37,6 +37,8 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'builder10', name: 'Inżynier komórki', description: 'Dodaj 10 organelli do swojej komórki' },
   { id: 'missions5', name: 'Zawodowiec', description: 'Wykonaj 5 zadań w jednej grze' },
   { id: 'mother', name: 'Matka kolonii', description: 'Jako bakteria wykonaj wielką misję „Mnożenie się” (pojawia się losowo w zadaniach)' },
+  { id: 'boss-slayer', name: 'Pogromca bossa', description: 'Pokonaj bossa (pojawia się od 8. poziomu, w losowym miejscu mapy — szukaj czerwonego znacznika)' },
+  { id: 'boss-hard', name: 'Legenda', description: 'Pokonaj bossa w trybie Trudnym' },
   { id: 'dna10', name: 'Kolekcjoner DNA', description: 'Zgromadź naraz 10 DNA (nagrody za zadania i poziomy)' },
 ];
 

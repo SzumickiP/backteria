@@ -8,7 +8,7 @@ import { biomeAt, opennessIn, perlin } from './walls';
  * co dawało cienkie linie na łączeniach kafli (mieszanie z przeciwległą krawędzią).
  */
 const CHUNK = 768;
-const RES = 160;
+const RES = 240;
 const STEP = CHUNK / RES;
 
 const smooth = (a: number, b: number, x: number): number => {
@@ -222,7 +222,7 @@ export class WallLayer {
       const depthK = smooth(0, 70, dist);
 
       // Normalna: zaokrąglona krawędź (bevel) wygasająca w głąb ściany.
-      const slope = 1.35 * Math.exp(-dist / 15);
+      const slope = 1.2 * Math.exp(-dist / 19);
       const inv = 1 / Math.hypot(dirx * slope, diry * slope, 1);
       const nx = dirx * slope * inv;
       const ny = diry * slope * inv;
@@ -232,7 +232,7 @@ export class WallLayer {
       const hx = LX, hy = LY, hz = LZ + 1;
       const hl = Math.hypot(hx, hy, hz);
       const nh = Math.max(0, (nx * hx + ny * hy + nz * hz) / hl);
-      const spec = nh ** 28 * 0.5 * (0.4 + 0.6 * (1 - smooth(0, 40, dist)));
+      const spec = nh ** 22 * 0.4 * (0.4 + 0.6 * (1 - smooth(0, 40, dist)));
 
       // Faktura: plamista tkanka + włókna + sieć naczyń włosowatych.
       const mottle = 0.5 + 0.5 * perlin(wx * 0.011, wy * 0.011, 91);
@@ -240,7 +240,7 @@ export class WallLayer {
       const fiber = 0.9 + 0.1 * mottle + 0.05 * cells;
       const vein = 1 - Math.abs(perlin(wx * 0.014 + 5, wy * 0.014 - 3, 93));
       const capillary = smooth(0.93, 0.99, vein) * (1 - depthK * 0.5);
-      const grain = ((Math.imul(px * 73856093 ^ py * 19349663 ^ (i * 83492791 + j), 2654435761) >>> 24) / 255 - 0.5) * 6;
+      const grain = ((Math.imul(px * 73856093 ^ py * 19349663 ^ (i * 83492791 + j), 2654435761) >>> 24) / 255 - 0.5) * 2.5;
 
       let r = (mid[0] + (deep[0] - mid[0]) * depthK) * fiber;
       let g = (mid[1] + (deep[1] - mid[1]) * depthK) * fiber;
@@ -268,7 +268,7 @@ export class WallLayer {
       b += sp * 0.8 + grain * 0.6;
 
       // Gładka krawędź: antyaliasing po odległości (miękkie mieszanie ze cieniem).
-      const a = smooth(0, 3.6, dist);
+      const a = smooth(0, 4.2, dist);
       const shadowEdge = 0.5;
       d[p] = r * a + 22 * (1 - a);
       d[p + 1] = g * a + 2 * (1 - a);

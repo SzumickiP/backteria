@@ -10,6 +10,7 @@ import {
   DIFFICULTY,
   GAME_MODES,
   ENEMY_COUNT_MUL,
+  BOSS,
   type GameModeId,
   DNA,
   PROGRESSION,
@@ -159,6 +160,13 @@ export class GameScene extends Phaser.Scene {
   missionsDone = 0;
   elapsed = 0;
   nextMissionAt = 0;
+  /** boss z wyzwania (jeśli żyje) */
+  boss?: Enemy;
+  /** poziom gracza potrzebny, by pojawił się następny boss */
+  private bossLevel = BOSS.minLevel;
+  private bossSummon = 0;
+  private bossRetry = 0;
+  private deadBoss?: Enemy;
   /** pozostały czas odnowienia ataku specjalnego (s) */
   abilityCd = 0;
   /** pozostały czas do możliwości przerobienia kolejnej komórki (s) */
@@ -313,6 +321,13 @@ export class GameScene extends Phaser.Scene {
     return this.friend ? { x: this.friend.cell.x, y: this.friend.cell.y } : undefined;
   }
 
+  /** Boss z wyzwania: do paska zdrowia i znaczników na mapach. */
+  get bossInfo(): { name: string; hp: number; maxHp: number; x: number; y: number } | undefined {
+    const b = this.boss;
+    if (!b?.active || b.hp <= 0) return undefined;
+    return { name: b.def.name, hp: b.hp, maxHp: b.maxHp, x: b.x, y: b.y };
+  }
+
   get nextMissionIn(): number {
     return Math.max(0, this.nextMissionAt - this.elapsed);
   }
@@ -367,6 +382,10 @@ export class GameScene extends Phaser.Scene {
     this.order = 'follow';
     this.orderTarget = undefined;
     this.mission = undefined;
+    this.boss = undefined;
+    this.bossLevel = BOSS.minLevel;
+    this.bossSummon = 0;
+    this.bossRetry = 0;
     this.biomass = 0;
     this.xp = 0;
     this.level = 1;
@@ -495,6 +514,7 @@ export class GameScene extends Phaser.Scene {
     if (this.over) return;
     this.updateSpawning(dt);
     this.updateMission(dt);
+    this.updateBoss(dt);
     this.updateFriends(dt);
     this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.regen * dt);
     this.updateCamera();
@@ -1474,7 +1494,7 @@ export class GameScene extends Phaser.Scene {
       // Długi pościg bez dosięgnięcia ofiary → wróg odpuszcza.
       if (dist(e, v) < e.radius + v.radius + 12) e.chaseTime = 0;
       else e.chaseTime += dt;
-      if (e.chaseTime > GIVE_UP.after && !e.missionTarget && !e.guardOf) {
+      if (e.chaseTime > GIVE_UP.after && !e.missionTarget && !e.guardOf && !e.def.boss) {
         e.chaseTime = 0;
         e.giveUpUntil = this.elapsed + GIVE_UP.duration;
         victimOf.delete(e);
@@ -1574,6 +1594,10 @@ export class GameScene extends Phaser.Scene {
           target = victim;
           stopAt = e.radius + victim.radius;
         }
+      } else if (e.def.boss) {
+        // Boss czeka na swoim miejscu, póki gracz nie zbliży się na zasięg wykrycia.
+        e.rotation += dt * 0.3;
+        return true;
       } else {
         // Ciągła presja: dryf w stronę gracza (zamaskowanego — błądzenie).
         if (this.cloaked) {
@@ -1596,7 +1620,7 @@ export class GameScene extends Phaser.Scene {
       if (e.motion === 'spin') e.rotation += dt * (e.kind === 'virus' ? 1.5 : e.radius < 10 ? 2 : 0.3);
       else e.faceMovement(dt, e.kind === 'antibody' || e.kind === 'spirochete' ? 8 : 3);
 
-      if (!e.missionTarget && !e.guardOf && e.speed > 0 && dist(e, pl) > ENEMY_DESPAWN_RADIUS) {
+      if (!e.missionTarget && !e.guardOf && !e.def.boss && e.speed > 0 && dist(e, pl) > ENEMY_DESPAWN_RADIUS) {
         e.destroy();
         return false;
       }
@@ -1607,7 +1631,7 @@ export class GameScene extends Phaser.Scene {
     const limit = this.maxEnemies;
     if (this.enemies.length > limit) {
       const removable = this.enemies
-        .filter((e) => !e.missionTarget && !e.guardOf && e.speed > 0 && dist(e, pl) > GIVE_UP.excessFar)
+        .filter((e) => !e.missionTarget && !e.guardOf && !e.def.boss && e.speed > 0 && dist(e, pl) > GIVE_UP.excessFar)
         .sort((a, b) => dist(b, pl) - dist(a, pl));
       const drop = new Set(removable.slice(0, this.enemies.length - limit));
       if (drop.size) {
@@ -1746,6 +1770,7 @@ export class GameScene extends Phaser.Scene {
       this.burst(e.x, e.y, e.burstColor, e.radius > 15 ? 14 : 8);
       audio.sfx(e.radius > 20 ? 'popBig' : 'pop');
       this.achieve('first-blood');
+      if (e === this.boss) this.onBossDefeated(e);
       if (this.kills >= 100) this.achieve('hunter');
       if (this.kills >= 30) this.achieve('slayer30');
       if (this.kills >= 300) this.achieve('exterminator');
@@ -1961,6 +1986,75 @@ export class GameScene extends Phaser.Scene {
         break;
       }
     }
+  }
+
+  // ───────────────────────── wyzwanie: boss ─────────────────────────
+
+  /** Boss pojawia się, gdy gracz jest dość rozwinięty, w losowym miejscu mapy (widocznym na mapach). */
+  private updateBoss(dt: number): void {
+    // Sługi pokonanego bossa giną razem z nim.
+    const dead = this.deadBoss;
+    if (dead) {
+      this.deadBoss = undefined;
+      const minions = this.enemies.filter((e) => e.guardOf === dead);
+      for (const e of minions) {
+        this.burst(e.x, e.y, e.burstColor, 6);
+        e.destroy();
+      }
+      if (minions.length) {
+        const gone = new Set<Enemy>(minions);
+        this.enemies = this.enemies.filter((e) => !gone.has(e));
+      }
+    }
+    const b = this.boss;
+    if (b) {
+      if (!b.active || b.hp <= 0) return;
+      // Boss przywołuje sługi, gdy gracz jest w pobliżu.
+      this.bossSummon -= dt;
+      if (this.bossSummon <= 0 && dist(b, this.player) < 900) {
+        this.bossSummon = BOSS.summonEvery;
+        const minions = this.enemies.filter((e) => e.guardOf === b).length;
+        const kinds: EnemyKind[] = this.isVirus ? ['antibody', 'leukocyte'] : ['virus', 'germ'];
+        for (let i = 0; i < 2 && minions + i < BOSS.maxMinions; i++) this.spawnGuard(kinds[Math.random() < 0.7 ? 0 : 1], b);
+        this.ringFx(b.x, b.y, b.burstColor, b.radius * 3);
+      }
+      return;
+    }
+    if (this.level < this.bossLevel || this.elapsed < BOSS.minTime || this.elapsed < this.bossRetry) return;
+    const p = this.openPoint(this.player, BOSS.minDist, BOSS.maxDist, 110, 20);
+    if (!p) {
+      this.bossRetry = this.elapsed + 3;
+      return;
+    }
+    const kind: EnemyKind = this.isVirus ? 'alphaMacrophage' : 'virusKing';
+    const boss = this.spawnEnemy(kind, p);
+    this.boss = boss;
+    this.bossSummon = 3;
+    this.ringFx(p.x, p.y, boss.burstColor, boss.radius * 4);
+    const name = boss.def.name;
+    this.game.events.emit(GameEvents.MissionStart, `Boss: ${name}`, 'Czerwony znacznik na mapie pokazuje, gdzie czeka. Przygotuj się!');
+    audio.sfx('alarm');
+  }
+
+  private onBossDefeated(b: Enemy): void {
+    this.boss = undefined;
+    this.bossLevel = this.level + BOSS.levelStep;
+    this.dna += BOSS.dna;
+    this.achieve('boss-slayer');
+    this.bossLevelAchievements();
+    this.deadBoss = b; // sługi znikną w updateBoss (tu trwa filtrowanie listy wrogów)
+    for (let i = 0; i < 4; i++) {
+      this.time.delayedCall(i * 220, () => this.ringFx(b.x, b.y, i % 2 ? 0xfde68a : b.burstColor, b.radius * (3 + i * 1.5)));
+    }
+    this.cameras.main.flash(500, 253, 230, 138);
+    this.cameras.main.shake(350, 0.01);
+    this.missionsDone++;
+    this.game.events.emit(GameEvents.MissionEnd, `Boss: ${b.def.name}`, true, `Boss pokonany! Nagroda: doświadczenie i +${BOSS.dna} DNA`, true);
+    audio.sfx('success');
+  }
+
+  private bossLevelAchievements(): void {
+    if (this.mode === 'hard') this.achieve('boss-hard');
   }
 
   /** Losuje rodzaj misji (inny niż poprzedni) i ją rozpoczyna. */
