@@ -1,8 +1,15 @@
 import { hostRoom, joinRoom, net, resetNet, type NetLink, type NetMode } from './link';
 
-/** Link dla gościa: ta sama strona z kodem pokoju w adresie. */
+/** Publiczna wersja gry (GitHub Pages) — na niej gość może otworzyć zaproszenie z dowolnego komputera. */
+const PUBLIC_URL = 'https://szumickip.github.io/backteria/';
+
+/** Czy gra działa tylko lokalnie (localhost / sieć domowa) — taki adres nie zadziała u gościa. */
+const isLocal = /^(localhost$|127\.|0\.0\.0\.0$|192\.168\.|10\.|\[::1\]$)/.test(location.hostname) || location.protocol === 'file:';
+
+/** Link dla gościa: publiczna strona z kodem pokoju w adresie. */
 export function inviteLink(code: string): string {
-  return `${location.origin}${location.pathname}?join=${code}`;
+  const base = isLocal ? PUBLIC_URL : `${location.origin}${location.pathname}`;
+  return `${base}?join=${code}`;
 }
 
 /** Kod pokoju z adresu (?join=KOD) — zużywa go, żeby odświeżenie strony nie dołączało ponownie. */
@@ -70,6 +77,7 @@ export function showLobby(
       <p class="acc-step">Kod pokoju:</p>
       <p class="acc-room" style="font:700 34px monospace;letter-spacing:6px;margin:0;text-align:center">…</p>
       <button class="acc-second acc-copy-link" disabled>Kopiuj link do gry</button>
+      <p class="acc-note">${isLocal ? 'Uwaga: uruchomiłeś grę lokalnie. Link wskazuje wersję publiczną (GitHub Pages) — gość i Ty musicie grać w tej samej wersji, więc najlepiej też otwórz grę stamtąd.' : 'Wyślij gościowi link — otworzy się od razu w pokoju.'}</p>
       <p class="acc-step">Połączeni: <span class="acc-who">nikt</span></p>
       <p class="acc-error" role="alert"></p>
       <button class="acc-submit acc-go" disabled>Rozpocznij grę</button>
