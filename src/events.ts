@@ -25,7 +25,7 @@ export const GameEvents = {
   Friend: 'bt-friend',
 } as const;
 
-export type MissionType = 'defend' | 'infect' | 'nest' | 'collect' | 'outbreak';
+export type MissionType = 'defend' | 'infect' | 'nest' | 'collect' | 'outbreak' | 'multiply' | 'boss';
 
 export interface GameSummary {
   species: SpeciesId;

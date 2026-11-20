@@ -1,7 +1,9 @@
+import { ACHIEVEMENTS } from './achievements';
 import { listAccounts, login, NICK_RULES, register, type Account } from './accounts';
 
 /**
- * Ekran konta (zwykły HTML nad grą): wybór istniejącego konta z listy albo utworzenie nowego (sam nick, bez hasła).
+ * Ekran konta (zwykły HTML nad grą): u góry pole na nick nowego gracza, poniżej lista dodanych graczy
+ * z liczbą osiągnięć — kliknięcie gracza loguje go (bez hasła).
  * Wywołuje `onDone` po wyborze / utworzeniu konta.
  */
 export function showAccountScreen(onDone: (acc: Account) => void): void {
@@ -10,18 +12,17 @@ export function showAccountScreen(onDone: (acc: Account) => void): void {
   root.innerHTML = `
     <form class="acc-card" novalidate>
       <h1>Backteria</h1>
-      <div class="acc-list-wrap">
-        <p class="acc-title">Wybierz konto</p>
-        <div class="acc-list"></div>
-      </div>
-      <p class="acc-title">Nowe konto</p>
-      <label>Nick
-        <input name="nick" autocomplete="off" maxlength="16" />
+      <label>Nowy gracz
+        <input name="nick" autocomplete="off" maxlength="16" placeholder="Wpisz nazwę gracza" />
       </label>
       <p class="acc-hint">${NICK_RULES}</p>
       <p class="acc-error" role="alert"></p>
-      <button type="submit" class="acc-submit">Utwórz konto i graj</button>
-      <p class="acc-note">Konta są zapisywane tylko w tej przeglądarce.</p>
+      <button type="submit" class="acc-submit">Dodaj gracza i graj</button>
+      <div class="acc-list-wrap">
+        <p class="acc-title">Gracze</p>
+        <div class="acc-list"></div>
+      </div>
+      <p class="acc-note">Gracze są zapisywani tylko w tej przeglądarce.</p>
     </form>`;
   document.body.appendChild(root);
 
@@ -43,10 +44,11 @@ export function showAccountScreen(onDone: (acc: Account) => void): void {
   const accounts = listAccounts();
   listWrap.style.display = accounts.length ? '' : 'none';
   for (const acc of accounts) {
+    const got = Object.keys(acc.achievements ?? {}).length;
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'acc-item';
-    b.textContent = `${acc.nick} · gry: ${acc.games}`;
+    b.textContent = `${acc.nick} · 🏆 ${got}/${ACHIEVEMENTS.length} · gry: ${acc.games}`;
     b.addEventListener('click', () => finish(login(acc.nick)));
     list.appendChild(b);
   }
@@ -57,5 +59,5 @@ export function showAccountScreen(onDone: (acc: Account) => void): void {
     finish(register(nick.value));
   });
 
-  if (accounts.length === 0) nick.focus();
+  nick.focus();
 }

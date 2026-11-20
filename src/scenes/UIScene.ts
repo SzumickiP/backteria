@@ -35,6 +35,8 @@ function missionColor(type: MissionType): number {
       return 0xef4444;
     case 'collect':
       return 0xfde047;
+    case 'multiply':
+      return 0x6ee7b7;
     default:
       return 0xa78bfa;
   }
@@ -117,7 +119,7 @@ export class UIScene extends Phaser.Scene {
       [GameEvents.Toast, (msg: string) => this.showToast(msg)],
       [GameEvents.GameOver, (s: GameSummary) => this.showGameOver(s)],
       [GameEvents.MissionStart, (title: string, subtitle: string) => this.onMissionStart(title, subtitle)],
-      [GameEvents.MissionEnd, (title: string, success: boolean, detail: string) => this.onMissionEnd(title, success, detail)],
+      [GameEvents.MissionEnd, (title: string, success: boolean, detail: string, big?: boolean) => this.onMissionEnd(title, success, detail, big)],
       [GameEvents.Conquest, (name: string, done: number, total: number) => this.showBanner(`Podbito: ${name}`, `Podbój organizmu ${done} / ${total}`)],
       [GameEvents.Victory, (s: GameSummary) => this.showGameOver(s, true)],
       [GameEvents.Friend, (msg: string) => this.showToast(msg)],
@@ -564,8 +566,42 @@ export class UIScene extends Phaser.Scene {
     this.showBanner(`Nowe zadanie: ${title}`, subtitle);
   }
 
-  private onMissionEnd(title: string, success: boolean, detail: string): void {
+  private onMissionEnd(title: string, success: boolean, detail: string, big = false): void {
+    if (success && big) {
+      this.showBigVictory(title, detail);
+      return;
+    }
     this.showBanner(success ? `Wykonane: ${title}` : `Nieudane: ${title}`, detail);
+  }
+
+  /** Efektowne zakończenie wielkiej misji: błysk ekranu, powiększający się napis, dłuższy komunikat. */
+  private showBigVictory(title: string, detail: string): void {
+    const { width, height } = this.scale;
+    const flash = this.add.rectangle(0, 0, width, height, 0x6ee7b7, 0.4).setOrigin(0).setDepth(60);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 900, onComplete: () => flash.destroy() });
+
+    const big = this.add
+      .text(width / 2, height * 0.32, `★ ${title.toUpperCase()} — SUKCES! ★`, {
+        fontFamily: FONT,
+        fontSize: '34px',
+        fontStyle: 'bold',
+        color: '#d1fae5',
+        stroke: '#065f46',
+        strokeThickness: 6,
+        shadow: SHADOW,
+        align: 'center',
+        wordWrap: { width: width - 40 },
+      })
+      .setOrigin(0.5)
+      .setDepth(61)
+      .setScale(0.4)
+      .setAlpha(0);
+    this.tweens.add({ targets: big, scale: 1, alpha: 1, duration: 450, ease: 'Back.Out' });
+    this.tweens.add({ targets: big, alpha: 0, y: big.y - 30, delay: 3600, duration: 700, onComplete: () => big.destroy() });
+
+    this.tweens.killTweensOf(this.banner);
+    this.banner.setText([`Wielka misja wykonana!`, detail]).setAlpha(1);
+    this.tweens.add({ targets: this.banner, alpha: 0, delay: 4200, duration: 700 });
   }
 
   // ───────────────────────── komunikaty ─────────────────────────
@@ -860,7 +896,7 @@ export class UIScene extends Phaser.Scene {
   private restart(): void {
     this.overlay?.destroy();
     this.overlay = undefined;
-    this.gs.scene.restart({ species: this.gs.species.id, animal: this.gs.animal });
+    this.gs.scene.restart({ species: this.gs.species.id, animal: this.gs.animal, mode: this.gs.mode });
   }
 
   private toMenu(): void {

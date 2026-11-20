@@ -27,6 +27,17 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'conqueror', name: 'Podbój', description: 'Jako wirus podbij cały organizm' },
   { id: 'friendship', name: 'Przyjaźń', description: 'Spotkaj przyjazną postać' },
   { id: 'nest-buster', name: 'Burzyciel gniazd', description: 'Zniszcz ognisko infekcji lub węzeł chłonny' },
+  { id: 'slayer30', name: 'Rozgrzewka', description: 'Pokonaj 30 wrogów w jednej grze' },
+  { id: 'exterminator', name: 'Eksterminator', description: 'Pokonaj 300 wrogów w jednej grze' },
+  { id: 'survivor5', name: 'Wytrwały', description: 'Przetrwaj 5 minut w jednej grze' },
+  { id: 'hard-mode', name: 'Twardziel', description: 'Przetrwaj 5 minut w trybie Trudnym (wybierz go w menu)' },
+  { id: 'level5', name: 'Rozwój', description: 'Osiągnij poziom 5' },
+  { id: 'level20', name: 'Mistrz ewolucji', description: 'Osiągnij poziom 20' },
+  { id: 'colony10', name: 'Rój', description: 'Miej naraz 10 komórek kolonii lub kopii' },
+  { id: 'builder10', name: 'Inżynier komórki', description: 'Dodaj 10 organelli do swojej komórki' },
+  { id: 'missions5', name: 'Zawodowiec', description: 'Wykonaj 5 zadań w jednej grze' },
+  { id: 'mother', name: 'Matka kolonii', description: 'Jako bakteria wykonaj wielką misję „Mnożenie się” (pojawia się losowo w zadaniach)' },
+  { id: 'dna10', name: 'Kolekcjoner DNA', description: 'Zgromadź naraz 10 DNA (nagrody za zadania i poziomy)' },
 ];
 
 export function hasAchievement(nick: string, id: string): boolean {

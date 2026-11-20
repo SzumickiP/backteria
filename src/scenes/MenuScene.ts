@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { ACHIEVEMENTS, achievementCount } from '../account/achievements';
 import { getAccount, listAccounts } from '../account/accounts';
 import { audio, SOUND_MODE_NAMES } from '../audio/AudioEngine';
-import { CHUNK } from '../config';
+import { CHUNK, GAME_MODES, GAME_MODE_ORDER, type GameModeId } from '../config';
 import { isKey, keyLabel } from '../settings';
 import { ANIMALS, ANIMAL_ORDER, type AnimalId } from '../world/animal';
 import { GameEvents } from '../events';
@@ -61,11 +61,37 @@ export class MenuScene extends Phaser.Scene {
     };
     refreshAnimals();
 
+    // Tryb rozgrywki: tempo narastania zagrożenia i liczba wrogów.
+    this.mode = loadMode();
+    const modeY = animY + 62;
+    const modeDesc = this.add.text(width / 2, modeY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8' }).setOrigin(0.5, 0);
+    const modeBtns = GAME_MODE_ORDER.map((id, i) => {
+      const b = this.add
+        .text(width / 2 + (i - 1) * 120, modeY, GAME_MODES[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      b.on('pointerdown', () => {
+        this.mode = id;
+        saveMode(id);
+        audio.sfx('click');
+        refreshModes();
+      });
+      return { id, b };
+    });
+    const refreshModes = () => {
+      for (const { id, b } of modeBtns) {
+        const on = id === this.mode;
+        b.setColor(on ? '#1c0a10' : '#f5e9ee').setBackgroundColor(on ? '#fde68a' : '#2a1019');
+      }
+      modeDesc.setText(`Tryb: ${GAME_MODES[this.mode].description}`);
+    };
+    refreshModes();
+
     const narrow = width < 640;
     const cardW = narrow ? Math.min(340, width - 32) : 300;
-    const cardH = narrow ? 250 : 330;
+    const cardH = narrow ? 250 : 300;
     const gap = 24;
-    const top = height * 0.14 + 136;
+    const top = height * 0.14 + 198;
 
     ORDER.forEach((id, i) => {
       const sp = SPECIES[id];
@@ -293,10 +319,31 @@ export class MenuScene extends Phaser.Scene {
   private pick(id: SpeciesId): void {
     if (this.achPanel) return; // lista osiągnięć otwarta
     audio.sfx('select');
-    this.scene.start('GameScene', { species: id, animal: this.animal });
+    this.scene.start('GameScene', { species: id, animal: this.animal, mode: this.mode });
   }
 
   private animal: AnimalId = 'mouse';
+  private mode: GameModeId = 'normal';
+}
+
+const MODE_KEY = 'backteria.mode';
+
+function loadMode(): GameModeId {
+  try {
+    const v = localStorage.getItem(MODE_KEY);
+    if (v && v in GAME_MODES) return v as GameModeId;
+  } catch {
+    /* brak pamięci */
+  }
+  return 'normal';
+}
+
+function saveMode(id: GameModeId): void {
+  try {
+    localStorage.setItem(MODE_KEY, id);
+  } catch {
+    /* brak pamięci */
+  }
 }
 
 const ANIMAL_KEY = 'backteria.animal';

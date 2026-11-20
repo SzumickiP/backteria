@@ -131,3 +131,12 @@ export const COLORS = {
   /** Zimne barwy — żeby nie myliły się z żółtymi wirusami. */
   nutrients: [0xa5f3fc, 0xe9d5ff, 0xc7f9e0],
 } as const;
+
+/** Tryby rozgrywki wybierane w menu przed startem. */
+export type GameModeId = 'calm' | 'normal' | 'hard';
+export const GAME_MODE_ORDER: GameModeId[] = ['calm', 'normal', 'hard'];
+export const GAME_MODES: Record<GameModeId, { name: string; description: string; threatRate: number; spawnMul: number; maxMul: number }> = {
+  calm: { name: 'Spokojny', description: 'Zagrożenie rośnie wolno, wrogów jest mniej — czas na naukę.', threatRate: 0.5, spawnMul: 1.5, maxMul: 0.65 },
+  normal: { name: 'Normalny', description: 'Zbalansowana rozgrywka.', threatRate: 1, spawnMul: 1, maxMul: 1 },
+  hard: { name: 'Trudny', description: 'Zagrożenie rośnie szybko, wrogów jest więcej.', threatRate: 1.6, spawnMul: 0.7, maxMul: 1.35 },
+};

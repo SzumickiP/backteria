@@ -8,6 +8,8 @@ import {
   DESPAWN_RADIUS,
   ENEMY_DESPAWN_RADIUS,
   DIFFICULTY,
+  GAME_MODES,
+  type GameModeId,
   DNA,
   PROGRESSION,
   STRUCTURES,
@@ -83,6 +85,8 @@ interface Mission {
   nest?: Enemy;
   /** rzadkie składniki do zebrania */
   items?: Nutrient[];
+  /** „matka” z kolonii, która dzieli się w trakcie misji mnożenia */
+  mother?: Cell;
   /** postęp (zebrane / zarażone) i cel */
   count: number;
   goal: number;
@@ -129,6 +133,9 @@ export interface MissionInfo {
 /** Ile zarażonych komórek w narządzie potrzeba, by go podbić (wirus). */
 const CONQUEST_PER_ORGAN = 6;
 
+/** Wielka misja bakterii „Mnożenie się”: czas podziału matki (s). */
+const MULTIPLY_TIME = 50;
+
 const TAU = Math.PI * 2;
 const MOVE_ACTIONS: Action[] = ['up', 'down', 'left', 'right'];
 const MOTE_COUNT = 45;
@@ -173,6 +180,7 @@ export class GameScene extends Phaser.Scene {
   private visited = new Set<string>();
   /** zwierzę, w którym toczy się gra */
   animal: AnimalId = 'mouse';
+  mode: GameModeId = 'normal';
   /** podbój organizmu (wirus): postęp w narządach i podbite narządy */
   private conquest = new Map<string, number>();
   private conquered = new Set<string>();
@@ -242,7 +250,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Poziom zagrożenia — rośnie płynnie z czasem (1, 2, 3...). */
   get threat(): number {
-    return 1 + this.elapsed / THREAT_PERIOD;
+    return 1 + (this.elapsed / THREAT_PERIOD) * GAME_MODES[this.mode].threatRate;
   }
 
   get xpToNext(): number {
@@ -268,6 +276,11 @@ export class GameScene extends Phaser.Scene {
       }
       case 'outbreak':
         return { ...base, detail: `Zarażone ${m.count} / ${m.goal}` };
+      case 'multiply': {
+        const mo = m.mother!;
+        const pctDone = Math.round(Phaser.Math.Clamp(1 - m.timeLeft / MULTIPLY_TIME, 0, 1) * 100);
+        return { ...base, detail: `Podział ${pctDone}% · zdrowie matki ${pct(mo)}`, x: mo.x, y: mo.y };
+      }
     }
   }
 
@@ -304,7 +317,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Scena jest restartowana na tej samej instancji — stan resetujemy tutaj. */
-  init(data: { species?: SpeciesId; animal?: AnimalId }): void {
+  init(data: { species?: SpeciesId; animal?: AnimalId; mode?: GameModeId }): void {
+    this.mode = data.mode ?? this.mode ?? 'normal';
     this.species = SPECIES[data.species ?? this.species?.id ?? 'bacterium'];
     // Zwierzę, w którym toczy się gra (świat, narządy, skóra).
     this.animal = data.animal ?? this.animal ?? 'mouse';
@@ -534,6 +548,7 @@ export class GameScene extends Phaser.Scene {
     audio.sfx('build');
     this.organelles.push(placed);
     if (this.organelles.length >= 5) this.achieve('builder');
+    if (this.organelles.length >= 10) this.achieve('builder10');
     this.recomputeStats();
     return undefined;
   }
@@ -566,6 +581,7 @@ export class GameScene extends Phaser.Scene {
     this.player.maxHp = s.maxHp;
     this.player.hp = Math.min(s.maxHp, this.player.hp + Math.max(0, s.maxHp - oldMax));
     for (const a of this.allies) {
+      if (a === this.mission?.mother) continue; // matka ma własne, wzmocnione zdrowie
       a.maxHp = s.allyMaxHp;
       a.hp = Math.min(s.allyMaxHp, a.hp + Math.max(0, s.allyMaxHp - oldAllyMax));
     }
@@ -1138,6 +1154,14 @@ export class GameScene extends Phaser.Scene {
     const slotBase = focus && this.allies.length ? Math.atan2(this.allies[0].y - focus.y, this.allies[0].x - focus.x) : 0;
 
     this.allies.forEach((a, i) => {
+      if (a === this.mission?.mother) {
+        // Matka (misja mnożenia) płynie sama za graczem, niezależnie od rozkazów.
+        const mf = this.waypoint(a, { x: p.x + Math.cos(back) * (p.radius + a.radius + 24), y: p.y + Math.sin(back) * (p.radius + a.radius + 24) });
+        this.steerMove(a, mf.x, mf.y, this.stats.speed * 1.35, dt, 8, { x: 0, y: 0 });
+        if (this.species.rod) a.faceMovement(dt, 9);
+        else a.rotation += dt * 2;
+        return;
+      }
       const flock = this.flockSteer(a, mates, 110);
       const speed = this.stats.speed * 1.25;
       if (focus) {
@@ -1328,7 +1352,7 @@ export class GameScene extends Phaser.Scene {
 
     const p = this.openPoint(this.player, 950, 1200, 30);
     if (!p) return; // spróbujemy w następnej klatce
-    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat);
+    this.spawnTimer = Math.max(D.spawnMin, D.spawnStart - t * D.spawnPerThreat) * GAME_MODES[this.mode].spawnMul;
     // Strefa zarażona: wrogowie rzadziej i nigdy w samej strefie.
     if (inStartZone(this.player.x, this.player.y)) this.spawnTimer *= START_ZONE.spawnSlowdown;
     if (inStartZone(p.x, p.y)) return;
@@ -1368,6 +1392,10 @@ export class GameScene extends Phaser.Scene {
     if (this.elapsed >= 180) this.achieve('survivor');
     if (this.elapsed >= 600) this.achieve('veteran');
     if (this.allies.length >= 5) this.achieve('colony');
+    if (this.allies.length >= 10) this.achieve('colony10');
+    if (this.elapsed >= 300) this.achieve('survivor5');
+    if (this.elapsed >= 300 && this.mode === 'hard') this.achieve('hard-mode');
+    if (this.dna >= 10) this.achieve('dna10');
 
     // Miejsce w ciele myszy (narząd / część ciała) i jego biom.
     const r = biomeAt(this.player.x, this.player.y);
@@ -1606,7 +1634,7 @@ export class GameScene extends Phaser.Scene {
   /** Limit wrogów naraz przy obecnym zagrożeniu. */
   private get maxEnemies(): number {
     const D = DIFFICULTY;
-    return Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(this.threat * D.maxAlivePerThreat));
+    return Math.round(Math.min(D.maxAliveCap, D.maxAliveBase + Math.floor(this.threat * D.maxAlivePerThreat)) * GAME_MODES[this.mode].maxMul);
   }
 
   // ───────────────────────── walka i infekcja ─────────────────────────
@@ -1718,6 +1746,8 @@ export class GameScene extends Phaser.Scene {
       audio.sfx(e.radius > 20 ? 'popBig' : 'pop');
       this.achieve('first-blood');
       if (this.kills >= 100) this.achieve('hunter');
+      if (this.kills >= 30) this.achieve('slayer30');
+      if (this.kills >= 300) this.achieve('exterminator');
       if (e.kind === 'mycobacterium' || e.kind === 'macrophage') this.achieve('giant-slayer');
       // Laseczka przetrwalnikowa: po śmierci uwalnia przetrwalniki.
       const od = e.def.onDeath;
@@ -1913,6 +1943,22 @@ export class GameScene extends Phaser.Scene {
         if (m.count >= m.goal) this.endMission(true);
         else if (m.timeLeft <= 0) this.endMission(false);
         break;
+      case 'multiply': {
+        const mo = m.mother!;
+        if (!mo.active || !mo.isAlive) {
+          this.endMission(false);
+          break;
+        }
+        // Patogeny napierają na matkę, póki trwa podział.
+        m.spawnTimer -= dt;
+        if (m.spawnTimer <= 0 && m.timeLeft > 4) {
+          m.spawnTimer = Math.max(1.8, 3.4 - this.threat * 0.12);
+          this.spawnGuard(Math.random() < Math.min(0.4, 0.08 * this.threat) ? 'germ' : 'virus', mo);
+        }
+        mo.setPulse(1 + Math.sin(this.elapsed * 8) * 0.08 * (1 - m.timeLeft / MULTIPLY_TIME + 0.3));
+        if (m.timeLeft <= 0) this.endMission(true);
+        break;
+      }
     }
   }
 
@@ -1920,7 +1966,12 @@ export class GameScene extends Phaser.Scene {
   private startMission(): void {
     const kinds: MissionType[] = this.isVirus ? ['infect', 'nest', 'outbreak'] : ['defend', 'nest', 'collect'];
     const pool = kinds.filter((k) => k !== this.lastMissionType);
-    const type = Phaser.Utils.Array.GetRandom(pool) as MissionType;
+    let type = Phaser.Utils.Array.GetRandom(pool) as MissionType;
+    // Wielka misja bakterii: mnożenie się — potrzebuje kogoś z kolonii (nie przyjaciela na czas).
+    const motherPick = this.isVirus || this.lastMissionType === 'multiply'
+      ? undefined
+      : Phaser.Utils.Array.GetRandom(this.allies.filter((a) => a.isAlive && !this.allyExpire.has(a)));
+    if (motherPick && Math.random() < 0.3) type = 'multiply';
     const base = { type, count: 0, goal: 0, spawnTimer: 2, fireTimer: 0 };
     let subtitle = '';
 
@@ -1982,6 +2033,19 @@ export class GameScene extends Phaser.Scene {
         this.mission = { ...base, title: 'Wywołaj epidemię', goal: 10, timeLeft: 45 };
         subtitle = 'Zaraź 10 komórek w 45 sekund';
         break;
+      case 'multiply': {
+        // Jedna z kolonii staje się silniejszą „matką”: sama płynie za graczem, ale nie słucha rozkazów.
+        const mother = motherPick!;
+        mother.setRadius(this.species.allyRadius * 1.6);
+        mother.maxHp = this.stats.allyMaxHp * 4;
+        mother.hp = mother.maxHp;
+        mother.damageMul = 2.5;
+        mother.setTint(0x6ee7b7);
+        this.ringFx(mother.x, mother.y, 0x6ee7b7, mother.radius * 4);
+        this.mission = { ...base, title: 'Mnożenie się', mother, timeLeft: MULTIPLY_TIME, spawnTimer: 3 };
+        subtitle = 'Matka z kolonii się dzieli — osłaniaj ją, aż skończy';
+        break;
+      }
     }
     this.lastMissionType = type;
     this.game.events.emit(GameEvents.MissionStart, this.mission!.title, subtitle);
@@ -2009,9 +2073,19 @@ export class GameScene extends Phaser.Scene {
     this.mission = undefined;
     this.nextMissionAt = this.elapsed + MISSION_COOLDOWN;
 
-    for (const e of this.enemies) {
-      if (m.organ && e.missionTarget === m.organ) e.missionTarget = undefined;
-      if (e.guardOf && (e.guardOf === m.organ || e.guardOf === m.nest)) e.guardOf = undefined;
+    // Uczestnicy misji (napastnicy, strażnicy) znikają po jej zakończeniu — zostaje tylko gracz i kolonia.
+    const participants = this.enemies.filter(
+      (e) =>
+        (m.organ && e.missionTarget === m.organ) ||
+        (e.guardOf && (e.guardOf === m.organ || e.guardOf === m.nest || e.guardOf === m.mother)),
+    );
+    if (participants.length) {
+      for (const e of participants) {
+        this.burst(e.x, e.y, e.burstColor, 6);
+        e.destroy();
+      }
+      const gone = new Set<Enemy>(participants);
+      this.enemies = this.enemies.filter((e) => !gone.has(e));
     }
 
     let detail = '';
@@ -2019,6 +2093,7 @@ export class GameScene extends Phaser.Scene {
       this.missionsDone++;
       this.achieve('defender');
       if (this.missionsDone >= 3) this.achieve('hero');
+      if (this.missionsDone >= 5) this.achieve('missions5');
       this.dna += DNA.perMission;
       this.gainXp(Math.round(PROGRESSION.missionXpBase + PROGRESSION.missionXpPerThreat * this.threat));
       detail = `Nagroda: doświadczenie i +${DNA.perMission} DNA`;
@@ -2064,6 +2139,16 @@ export class GameScene extends Phaser.Scene {
           this.releaseCopies(this.player.x, this.player.y, 3);
           detail += ' i nowe kopie';
           break;
+        case 'multiply': {
+          this.achieve('mother');
+          const mo = m.mother!;
+          this.dna += 1;
+          this.burst(mo.x, mo.y, COLORS.burstAlly, 24);
+          this.ringFx(mo.x, mo.y, 0x6ee7b7, mo.radius * 5);
+          this.releaseCopies(mo.x, mo.y, 5);
+          detail = `Matka się podzieliła! Nagroda: doświadczenie, +${DNA.perMission + 1} DNA i nowa kolonia`;
+          break;
+        }
       }
     } else {
       switch (m.type) {
@@ -2092,14 +2177,34 @@ export class GameScene extends Phaser.Scene {
         case 'outbreak':
           detail = 'Epidemia wygasła';
           break;
+        case 'multiply':
+          detail = 'Matka zginęła, zanim się podzieliła';
+          break;
       }
+    }
+    // Matka wraca do zwykłej kolonii (zostaje trochę silniejsza po sukcesie).
+    const mother = m.mother;
+    if (mother?.active) {
+      mother.clearTint();
+      mother.resetTint();
+      if (!success) mother.damageMul = 1;
     }
     // Sprzątanie: niezebrane składniki znikają, narząd zanika po chwili.
     for (const it of m.items ?? []) it.destroy();
     const o = m.organ;
     if (o) this.tweens.add({ targets: o, alpha: 0, delay: 2500, duration: 2000, onComplete: () => o.destroy() });
 
-    this.game.events.emit(GameEvents.MissionEnd, m.title, success, detail);
+    const big = m.type === 'multiply';
+    if (big && success && m.mother?.active) {
+      // Widoczne świętowanie: kilka rozchodzących się pierścieni, błysk kamery i napis nad matką.
+      const mo = m.mother;
+      for (let i = 0; i < 4; i++) {
+        this.time.delayedCall(i * 220, () => this.ringFx(mo.x, mo.y, i % 2 ? 0xfde68a : 0x6ee7b7, mo.radius * (5 + i * 2)));
+      }
+      this.cameras.main.flash(500, 110, 231, 183);
+      this.floatText(mo.x, mo.y - mo.radius - 10, '+5 kopii!', '#6ee7b7');
+    }
+    this.game.events.emit(GameEvents.MissionEnd, m.title, success, detail, big);
     audio.sfx(success ? 'success' : 'fail');
   }
 
@@ -2236,6 +2341,8 @@ export class GameScene extends Phaser.Scene {
       this.level++;
       this.ringFx(this.player.x, this.player.y, 0xfde68a, this.player.radius * 5);
       audio.sfx('levelup');
+      if (this.level >= 5) this.achieve('level5');
+      if (this.level >= 20) this.achieve('level20');
       if (this.level >= 10) this.achieve('level10');
       this.pendingLevelUps++;
       if (this.level % DNA.everyLevels === 0) {

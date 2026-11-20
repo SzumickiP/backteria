@@ -21,7 +21,9 @@ export type EnemyKind =
   | 'antibody'
   | 'macrophage'
   | 'infectionNest'
-  | 'lymphNode';
+  | 'lymphNode'
+  | 'virusKing'
+  | 'alphaMacrophage';
 
 export interface EnemyDef {
   name: string;
@@ -53,6 +55,8 @@ export interface EnemyDef {
   flagella?: { color: number; count: number };
   /** porusza się w stadzie z innymi tego samego rodzaju */
   flock?: boolean;
+  /** boss: nie znika z oddali, ma pasek zdrowia */
+  boss?: boolean;
 }
 
 export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
@@ -112,11 +116,20 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     name: 'Węzeł chłonny', radius: 50, hp: 420, speed: 0, dps: 22, xp: 35, biomass: 0, minThreat: 99,
     texture: TEX.organ, texRadius: TEX_RADIUS.organ, burstColor: 0xa5b4fc, motion: 'spin', aggro: 0,
   },
+  // Bossy z wyzwań — wielcy, wytrzymali, przywołują sługi.
+  virusKing: {
+    name: 'Król wirusów', radius: 72, hp: 1400, speed: 58, dps: 32, xp: 150, biomass: 30, minThreat: 99,
+    texture: TEX.virus, texRadius: TEX_RADIUS.virus, burstColor: COLORS.burstVirus, motion: 'spin', aggro: 800, boss: true, armor: 0.7,
+  },
+  alphaMacrophage: {
+    name: 'Alfa-makrofag', radius: 80, hp: 1500, speed: 55, dps: 36, xp: 150, biomass: 0, minThreat: 99,
+    texture: TEX.macrophage, texRadius: TEX_RADIUS.leukocyte, burstColor: 0xa5b4fc, motion: 'spin', aggro: 800, boss: true, armor: 0.7,
+  },
 };
 
 /** Wrogowie układu odpornościowego (reszta to patogeny). */
 export function isImmuneKind(k: EnemyKind): boolean {
-  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode';
+  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode' || k === 'alphaMacrophage';
 }
 
 export class Enemy extends Cell {
