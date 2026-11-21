@@ -133,13 +133,36 @@ export const COLORS = {
 } as const;
 
 /** Tryby rozgrywki wybierane w menu przed startem. */
-export type GameModeId = 'calm' | 'normal' | 'hard';
-export const GAME_MODE_ORDER: GameModeId[] = ['calm', 'normal', 'hard'];
+export type GameModeId = 'calm' | 'normal' | 'hard' | 'dead';
+export const GAME_MODE_ORDER: GameModeId[] = ['calm', 'normal', 'hard', 'dead'];
 export const GAME_MODES: Record<GameModeId, { name: string; description: string; threatRate: number; spawnMul: number; maxMul: number }> = {
   calm: { name: 'Spokojny', description: 'Zagrożenie rośnie wolno, wrogów jest mniej — czas na naukę.', threatRate: 0.5, spawnMul: 1.5, maxMul: 0.65 },
   normal: { name: 'Normalny', description: 'Zbalansowana rozgrywka.', threatRate: 1, spawnMul: 1, maxMul: 1 },
   hard: { name: 'Trudny', description: 'Zagrożenie rośnie szybko, wrogów jest więcej.', threatRate: 1.6, spawnMul: 0.7, maxMul: 1.35 },
+  dead: {
+    name: 'Martwy żywiciel',
+    description: 'Żywiciel umarł: bez odporności, ale z rywalnymi koloniami. Zajmij jak najwięcej ciała w 10 min.',
+    threatRate: 0.9, spawnMul: 0.85, maxMul: 1.1,
+  },
 };
+
+/** Tryb „Martwy żywiciel”: czas do rozkładu ciała i siła zajmowania terytorium (na sekundę). */
+export const DEAD_HOST = {
+  duration: 600,
+  /** promień i siła zajmowania przez gracza, kolonię, budowle i rywali */
+  player: { r: 700, rate: 0.45 },
+  ally: { r: 380, rate: 0.16 },
+  structure: { r: 1000, rate: 0.3 },
+  rival: { r: 400, rate: 0.14 },
+  /** samoistny rozrost co sekundę; rywale rosną z czasem (+100% co `rivalGrowth` s) */
+  spreadMine: 0.03,
+  spreadRival: 0.03,
+  rivalGrowth: 300,
+  /** gniazda rywali na starcie */
+  rivalNests: 5,
+  /** doświadczenie za każde zdobyte pole */
+  xpPerCell: 2,
+} as const;
 
 /** Mnożnik liczby atakujących (0.39 = o 61% mniej niż pierwotnie: niższy limit i rzadszy spawn). */
 export const ENEMY_COUNT_MUL = 0.39;

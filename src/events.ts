@@ -33,4 +33,23 @@ export interface GameSummary {
   level: number;
   kills: number;
   missions: number;
+  /** tryb „Martwy żywiciel”: zajęty ułamek ciała (0–1) */
+  area?: number;
+  /** co gracz zrobił w tej grze — do scenki końcowej */
+  ending?: EndingInfo;
+}
+
+export interface EndingInfo {
+  /** nazwa zwierzęcia (np. „Mysz”) */
+  animal: string;
+  hard: boolean;
+  brain: boolean;
+  conquered: number;
+  organs: number;
+  colony: number;
+  structures: number;
+  /** utracona kończyna (biernik, np. „łapę”) */
+  limb?: string;
+  /** teren rywali (tryb „Martwy żywiciel”) */
+  rival?: number;
 }

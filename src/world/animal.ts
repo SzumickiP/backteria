@@ -268,6 +268,7 @@ export const ZONE_NAME = 'Strefa zarażona';
 /** Ustawia zwierzę, w którym toczy się gra (przed startem sceny gry). */
 export function setAnimal(id: AnimalId): void {
   current = ANIMALS[id];
+  lost.clear();
   allBody = current.parts.flatMap((p) => p.shapes);
   zone = undefined;
 }
@@ -347,6 +348,87 @@ export function shapesDist(shapes: Shape[], x: number, y: number): number {
 /** Odległość od skóry (ujemna = wewnątrz zwierzęcia). */
 export function bodyDist(x: number, y: number): number {
   return shapesDist(allBody, x, y);
+}
+
+// ───────────────────────── utrata kończyny ─────────────────────────
+
+/** Części ciała, które zwierzę może stracić (wszystko poza głową, szyją i tułowiem). */
+const CORE_PARTS = ['Głowa', 'Szyja', 'Tułów'];
+
+export interface LostLimb {
+  name: string;
+  shapes: Shape[];
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+const lost = new Set<Shape>();
+
+/** Czy kształt ciała należy do utraconej kończyny. */
+export const isLostShape = (s: Shape): boolean => lost.has(s);
+
+/** Punkty osi kształtu z promieniem (do sprawdzania, czy kształty się stykają). */
+function shapeSamples(s: Shape): [number, number, number][] {
+  if (s.kind === 'ellipse') {
+    const r = Math.min(s.rx, s.ry);
+    return [[s.x, s.y, r], [s.x + s.rx - r, s.y, r], [s.x - s.rx + r, s.y, r], [s.x, s.y + s.ry - r, r], [s.x, s.y - s.ry + r, r]];
+  }
+  const out: [number, number, number][] = [];
+  for (let t = 0; t <= 1.0001; t += 0.25) out.push([s.ax + (s.bx - s.ax) * t, s.ay + (s.by - s.ay) * t, s.ra + (s.rb - s.ra) * t]);
+  return out;
+}
+
+const touching = (a: Shape, b: Shape) =>
+  shapeSamples(a).some(([x, y, r]) => shapeDist(b, x, y) < r) || shapeSamples(b).some(([x, y, r]) => shapeDist(a, x, y) < r);
+
+/** Pojedyncze kończyny: stykające się kształty jednej części ciała (np. jedna łapa, jedna ręka, cały ogon). */
+function limbGroups(): { name: string; shapes: Shape[] }[] {
+  const groups: { name: string; shapes: Shape[] }[] = [];
+  for (const p of current.parts) {
+    if (CORE_PARTS.includes(p.name)) continue;
+    const left = p.shapes.filter((s) => !lost.has(s));
+    while (left.length) {
+      const g = [left.shift()!];
+      for (let i = 0; i < g.length; i++) {
+        for (let k = left.length - 1; k >= 0; k--) {
+          if (touching(g[i], left[k])) g.push(...left.splice(k, 1));
+        }
+      }
+      groups.push({ name: p.name, shapes: g });
+    }
+  }
+  return groups;
+}
+
+function bounds(shapes: Shape[]): Omit<LostLimb, 'name' | 'shapes'> {
+  const b = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+  for (const s of shapes) {
+    const pts = s.kind === 'ellipse' ? [[s.x - s.rx, s.y - s.ry], [s.x + s.rx, s.y + s.ry]] : [
+      [s.ax - s.ra, s.ay - s.ra], [s.ax + s.ra, s.ay + s.ra], [s.bx - s.rb, s.by - s.rb], [s.bx + s.rb, s.by + s.rb],
+    ];
+    for (const [x, y] of pts) {
+      b.minX = Math.min(b.minX, x);
+      b.maxX = Math.max(b.maxX, x);
+      b.minY = Math.min(b.minY, y);
+      b.maxY = Math.max(b.maxY, y);
+    }
+  }
+  return b;
+}
+
+/**
+ * Zwierzę traci losową kończynę spełniającą warunek `allowed` (np. daleko od gracza).
+ * Kończyna znika z ciała: w jej miejscu jest już tylko „poza ciałem” (ściana).
+ */
+export function amputate(allowed: (shapes: Shape[]) => boolean): LostLimb | undefined {
+  const options = limbGroups().filter((g) => allowed(g.shapes));
+  if (!options.length) return undefined;
+  const g = options[Math.floor(Math.random() * options.length)];
+  for (const s of g.shapes) lost.add(s);
+  allBody = current.parts.flatMap((p) => p.shapes).filter((s) => !lost.has(s));
+  return { name: g.name, shapes: g.shapes, ...bounds(g.shapes) };
 }
 
 export interface RegionSample {

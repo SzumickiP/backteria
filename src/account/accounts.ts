@@ -129,6 +129,11 @@ export function recordResult(nick: string, s: GameSummary): boolean {
   const acc = all[keyOf(nick)];
   if (!acc) return false;
   acc.games++;
+  // Tryb „Martwy żywiciel” ma stały czas (10 min) — nie liczy się do rekordów przetrwania.
+  if (s.area !== undefined) {
+    save(all);
+    return false;
+  }
   const prev = acc.best[s.species];
   const isBest = !prev || s.time > prev.time;
   if (isBest) acc.best[s.species] = { time: s.time, level: s.level, kills: s.kills, missions: s.missions };

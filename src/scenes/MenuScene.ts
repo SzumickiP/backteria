@@ -65,9 +65,12 @@ export class MenuScene extends Phaser.Scene {
     this.mode = loadMode();
     const modeY = animY + 62;
     const modeDesc = this.add.text(width / 2, modeY + 24, '', { fontFamily: FONT, fontSize: '13px', color: '#c29aa8', align: 'center', wordWrap: { width: Math.min(width - 32, 640) } }).setOrigin(0.5, 0);
+    const modeStep = Math.min(160, (width - 16) / GAME_MODE_ORDER.length);
     const modeBtns = GAME_MODE_ORDER.map((id, i) => {
       const b = this.add
-        .text(width / 2 + (i - 1) * 120, modeY, GAME_MODES[id].name, { fontFamily: FONT, fontSize: '16px', padding: { x: 14, y: 5 } })
+        .text(width / 2 + (i - (GAME_MODE_ORDER.length - 1) / 2) * modeStep, modeY, GAME_MODES[id].name, {
+          fontFamily: FONT, fontSize: modeStep < 150 ? '13px' : '16px', padding: { x: modeStep < 150 ? 8 : 14, y: 5 },
+        })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
       b.on('pointerdown', () => {
@@ -147,18 +150,24 @@ export class MenuScene extends Phaser.Scene {
       ORDER.forEach((id, i) => {
         const best = acc.best[id];
         const x = narrow ? width / 2 : width / 2 - cardW - gap / 2 + i * (cardW + gap) + cardW / 2;
-        const y = narrow ? top + i * (cardH + 16) + cardH - 44 : top + cardH + 12;
+        // Dwie linie i szerokość karty — tabliczki obu postaci nigdy na siebie nie nachodzą.
+        const plateW = cardW - (narrow ? 24 : 0);
+        const y = narrow ? top + i * (cardH + 16) + cardH - 62 : top + cardH + 12;
         const t = best
-          ? `🏆 Rekord — ${SPECIES[id].name}: ${Math.floor(best.time / 60)}:${String(Math.floor(best.time % 60)).padStart(2, '0')}  ·  poziom ${best.level}`
-          : `🏆 Rekord — ${SPECIES[id].name}: jeszcze brak`;
+          ? `🏆 Rekord — ${SPECIES[id].name}\n${Math.floor(best.time / 60)}:${String(Math.floor(best.time % 60)).padStart(2, '0')}  ·  poziom ${best.level}`
+          : `🏆 Rekord — ${SPECIES[id].name}\njeszcze brak`;
         const label = this.add
           .text(x, y, t, {
             fontFamily: FONT,
-            fontSize: narrow ? '15px' : '17px',
+            fontSize: narrow ? '14px' : '16px',
             fontStyle: 'bold',
             color: best ? '#fde68a' : '#c9b48a',
             backgroundColor: best ? '#3b2608' : '#24161a',
-            padding: { x: 14, y: 7 },
+            align: 'center',
+            lineSpacing: 2,
+            padding: { x: 8, y: 6 },
+            fixedWidth: plateW,
+            wordWrap: { width: plateW - 16 },
           })
           .setOrigin(0.5, 0);
         // Złota ramka wokół tabliczki.

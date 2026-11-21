@@ -53,7 +53,11 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'human-host', name: 'Gość w człowieku', description: 'Zagraj na planszy Człowiek (wybierz ją w menu) i przetrwaj tam 3 minuty' },
   { id: 'head-trip', name: 'Od stóp do głów', description: 'Na planszy Człowiek dotrzyj do głowy' },
   { id: 'vaccine-slayer', name: 'Przeciw szczepionce', description: 'Pokonaj bossa Szczepionkę (losowe zdarzenie od 4. poziomu)' },
-  { id: 'events5', name: 'Bywalec zdarzeń', description: 'Przeżyj 5 zdarzeń w organizmie (zranienie, gorączka, posiłek, sen, kichnięcie, szczepionka)' },
+  { id: 'dead-25', name: 'Osadnik', description: 'Martwy żywiciel: zajmij 25% ciała' },
+  { id: 'dead-50', name: 'Władca truchła', description: 'Martwy żywiciel: zajmij połowę ciała' },
+  { id: 'dead-75', name: 'Jedyny lokator', description: 'TRUDNE: Martwy żywiciel — zajmij 75% ciała' },
+  { id: 'amputee',name: 'Świadek amputacji', description: 'RZADKIE: przeżyj moment, w którym stworzenie traci kończynę' },
+  { id: 'events5',name: 'Bywalec zdarzeń', description: 'Przeżyj 5 zdarzeń w organizmie (np. gorączka, sen, antybiotyk, prąd, burza cytokin)' },
   { id: 'symbiont', name: 'Symbionta', description: 'Jako bakteria przetrwaj 5 minut, nie atakując przyjaznych komórek odporności' },
   { id: 'provoker', name: 'Prowokator', description: 'Zaatakuj szarżą lub toksyną przyjazną komórkę, żeby stała się wrogiem' },
 ];

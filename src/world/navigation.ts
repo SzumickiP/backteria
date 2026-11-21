@@ -25,6 +25,11 @@ export class Navigator {
   private oy = 0;
   private size = 0;
 
+  /** Zapomina zapamiętane wolne/zajęte pola (po zmianie kształtu świata). */
+  resetCache(): void {
+    this.freeCache.clear();
+  }
+
   private key(cx: number, cy: number): number {
     // Unikalny klucz dla współrzędnych w zakresie ±2^20.
     return (cx + 1048576) * 2097152 + (cy + 1048576);

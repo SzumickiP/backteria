@@ -9,6 +9,7 @@ import {
   ENEMY_DESPAWN_RADIUS,
   DIFFICULTY,
   GAME_MODES,
+  DEAD_HOST,
   ENEMY_COUNT_MUL,
   BOSS,
   type GameModeId,
@@ -38,19 +39,20 @@ import { Nutrient } from '../entities/Nutrient';
 import { Organ } from '../entities/Organ';
 import { Prey } from '../entities/Prey';
 import { Structure, type StructureKind } from '../entities/Structure';
-import { GameEvents, type GameSummary, type MissionType } from '../events';
+import { GameEvents, type EndingInfo, type GameSummary, type MissionType } from '../events';
 import { drawFeelers, drawOrganelles } from '../graphics/organelleDraw';
 import { applyBody, bodyStretch, body, loadBody } from '../body';
 import { TEX, TEX_RADIUS, createTextures } from '../graphics/textures';
 import { rollMutations, type Mutation, type PlayerStats } from '../mutations';
 import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organelles';
-import { ACTIONS, isKey, settings, type Action } from '../settings';
+import { ACTIONS, isKey, keyLabel, settings, type Action } from '../settings';
 import { SPECIES, type SpeciesDef, type SpeciesId } from '../species';
 import { WallLayer } from '../world/WallLayer';
 import { FogLayer } from '../graphics/fog';
-import { brainArena, currentAnimal, guardPosts, inStartZone, partAt, pickStartZone, setAnimal, setBrainArena, setStartZone, startZone, type AnimalId } from '../world/animal';
+import { amputate, bodyDist, brainArena, currentAnimal, guardPosts, shapesDist, inStartZone, partAt, pickStartZone, setAnimal, setBrainArena, setStartZone, startZone, type AnimalId } from '../world/animal';
 import { BIOMES, type BiomeId } from '../world/biomes';
 import { Navigator, avoidWalls } from '../world/navigation';
+import { TERR_CELL, Territory } from '../world/territory';
 import { biomeAt, blockedCircle, findOpenSpot, isWall } from '../world/walls';
 
 type ControlMode = 'none' | 'mouse' | 'keyboard';
@@ -140,6 +142,9 @@ const CONQUEST_PER_ORGAN = 6;
 
 /** Wielka misja bakterii „Mnożenie się”: czas podziału matki (s). */
 const MULTIPLY_TIME = 75;
+/** Kolonia: mnożnik przyjmowanych obrażeń i regeneracja (ułamek maks. zdrowia na sekundę). */
+const ALLY_TOUGHNESS = 0.8;
+const ALLY_REGEN = 0.025;
 
 const TAU = Math.PI * 2;
 const MOVE_ACTIONS: Action[] = ['up', 'down', 'left', 'right'];
@@ -269,6 +274,21 @@ export class GameScene extends Phaser.Scene {
   private hostEventName = '';
   private evSpeedMul = 1;
   private evSpawnMul = 1;
+  /** dodatkowe skutki trwającego zdarzenia gospodarza */
+  private evPlayerSpeedMul = 1;
+  private evAntibiotic = false;
+  private evDrift: { x: number; y: number } | null = null;
+  private evFeed = 0;
+  private evFeedTimer = 0;
+  /** tryb „Martwy żywiciel”: siatka terytorium (UIScene rysuje ją na mapach) */
+  terr?: Territory;
+  private terrTick = 0;
+  private terrSpread = 0;
+  private terrMilestone = 0;
+  private terrWarned = false;
+  /** utracona kończyna (do scenki końcowej) */
+  private lostLimbName?: string;
+  private terrGfx!: Phaser.GameObjects.Graphics;
   private pendingLevelUps = 0;
   private offerOpen = false;
   private over = false;
@@ -374,7 +394,7 @@ export class GameScene extends Phaser.Scene {
     setAnimal(this.animal);
     // Losowe miejsce startu: strefa zarażona, w której łatwiej zacząć.
     setStartZone(pickStartZone(Math.random, START_ZONE.radius));
-    setBrainArena(this.species.id === 'virus');
+    setBrainArena(this.species.id === 'virus' && this.mode !== 'dead');
     this.brainBoss = undefined;
     this.brainStartAt = 0;
     this.brainMinHp = 1;
@@ -384,6 +404,14 @@ export class GameScene extends Phaser.Scene {
     this.brainDoorWarned = false;
     this.deadBrain = undefined;
     this.posts = guardPosts().filter((p) => !inStartZone(p.x, p.y)).map((p) => ({ ...p, guards: [], respawnAt: 0 }));
+    // Martwy żywiciel: nie ma już układu odpornościowego, więc ani strażników, ani walki z Mózgiem.
+    if (this.mode === 'dead') this.posts = [];
+    this.terr = undefined;
+    this.terrTick = 0;
+    this.terrSpread = 0;
+    this.terrMilestone = 0;
+    this.terrWarned = false;
+    this.lostLimbName = undefined;
     this.cloakTime = 0;
     this.cloakCd = 0;
     this.stats = { ...this.species.stats };
@@ -444,8 +472,7 @@ export class GameScene extends Phaser.Scene {
     this.hostEventLeft = 0;
     this.hostEventsSeen = 0;
     this.provokedAny = false;
-    this.evSpeedMul = 1;
-    this.evSpawnMul = 1;
+    this.clearHostEvent();
     this.pendingLevelUps = 0;
     this.offerOpen = false;
     this.over = false;
@@ -492,6 +519,8 @@ export class GameScene extends Phaser.Scene {
     this.organelleGfx = this.add.graphics().setDepth(5.2);
     this.bars = this.add.graphics().setDepth(10);
     this.arenaGfx = this.add.graphics().setDepth(3.2);
+    this.terrGfx = this.add.graphics().setDepth(1.5);
+    if (this.isDeadHost) this.startDeadHost();
 
     const cam = this.cameras.main;
     cam.removeBounds();
@@ -501,6 +530,8 @@ export class GameScene extends Phaser.Scene {
     if (this.game.renderer.type === Phaser.WEBGL && cam.postFX) {
       cam.postFX.clear();
       cam.postFX.addVignette(0.5, 0.5, 0.82, 0.32);
+      // Martwe ciało: wyblakłe, szarawe barwy.
+      if (this.isDeadHost) cam.postFX.addColorMatrix().saturate(-0.45);
     }
 
     this.setupInput();
@@ -584,6 +615,8 @@ export class GameScene extends Phaser.Scene {
     this.updateBoss(dt);
     this.updateBrainArena(dt);
     this.updateHostEvents(dt);
+    this.updateDeadHost(dt);
+    if (this.over) return;
     this.updateFriends(dt);
     this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.regen * dt);
     this.updateCamera();
@@ -666,7 +699,7 @@ export class GameScene extends Phaser.Scene {
     for (const o of this.organelles) defs.get(o.id)?.apply(s);
     if (this.species.rod) applyBody(s);
     // Mniejsze bakterie (kolonia) rosną w siłę wraz z poziomem gracza.
-    const allyLevelMul = 1 + 0.06 * Math.max(0, (this.level ?? 1) - 1);
+    const allyLevelMul = 1 + 0.08 * Math.max(0, (this.level ?? 1) - 1);
     s.allyMaxHp *= allyLevelMul;
     s.allyDamage *= allyLevelMul;
     this.stats = s;
@@ -867,7 +900,7 @@ export class GameScene extends Phaser.Scene {
       this.trail(p.x, p.y);
     } else {
       // Większy gracz jest nieco wolniejszy.
-      const speed = this.stats.speed * (this.species.baseRadius / p.radius) ** 0.25 * (this.elapsed < this.slowUntil ? 0.55 : 1);
+      const speed = this.stats.speed * (this.species.baseRadius / p.radius) ** 0.25 * (this.elapsed < this.slowUntil ? 0.55 : 1) * this.evPlayerSpeedMul;
       const x0 = p.x;
       const y0 = p.y;
       if (this.control === 'keyboard') {
@@ -1306,6 +1339,8 @@ export class GameScene extends Phaser.Scene {
       else a.rotation += dt * 2;
       // Wspólny rytm „oddechu” — kolonia pulsuje jednocześnie.
       a.setPulse(1 + Math.sin(this.elapsed * 4) * 0.04);
+      // Kolonia powoli się leczy (2,5% zdrowia na sekundę).
+      a.hp = Math.min(this.stats.allyMaxHp, a.hp + this.stats.allyMaxHp * ALLY_REGEN * dt);
       if (!this.isVirus) a.wobble(this.elapsed);
     });
   }
@@ -1478,31 +1513,46 @@ export class GameScene extends Phaser.Scene {
 
   // ───────────────────────── zdarzenia w organizmie ─────────────────────────
 
-  /** Losowe zdarzenia gospodarza (zranienie, gorączka, posiłek, sen, kaszel) — co 45–90 s. */
+  /**
+   * Losowe zdarzenia gospodarza — co 45–90 s. Większość trwa dłuższą chwilę (30–55 s), a skutki
+   * trwającego zdarzenia liczy `applyHostEvent`.
+   */
   private updateHostEvents(dt: number): void {
+    if (this.isDeadHost) return; // martwy żywiciel nie gorączkuje, nie śpi, nie je
     if (this.hostEventLeft > 0) {
       this.hostEventLeft -= dt;
+      this.applyHostEvent(dt);
       if (this.hostEventLeft <= 0) {
-        this.evSpeedMul = 1;
-        this.evSpawnMul = 1;
+        this.clearHostEvent();
         this.game.events.emit(GameEvents.Toast, `Koniec: ${this.hostEventName}`);
       }
       return;
     }
     this.hostEventIn -= dt;
     if (this.hostEventIn > 0) return;
+    // Podczas walki z Mózgiem zdarzenia czekają.
+    if (this.brainBoss) {
+      this.hostEventIn = 10;
+      return;
+    }
     this.hostEventIn = 45 + Math.random() * 45;
     if (++this.hostEventsSeen >= 5) this.achieve('events5');
     const toast = (m: string) => this.game.events.emit(GameEvents.Toast, m);
     const cam = this.cameras.main;
     const pl = this.player;
-    let kind = Phaser.Math.Between(0, 5);
+    const timed = (name: string, seconds: number) => {
+      this.hostEventName = name;
+      this.hostEventLeft = seconds;
+    };
+    // Bardzo rzadkie: stworzenie traci kończynę (ok. 4% zdarzeń, nie wcześniej niż po 5 minutach).
+    if (this.elapsed > 300 && Math.random() < 0.04 && this.loseLimb()) return;
+    let kind = Phaser.Math.Between(0, 9);
     // Szczepionka wymaga doświadczonego gracza i braku innego bossa.
-    if (kind === 5 && (this.boss || this.level < 4)) kind = Phaser.Math.Between(0, 4);
+    if (kind === 5 && (this.boss || this.level < 4)) kind = Phaser.Utils.Array.GetRandom([0, 1, 2, 3, 4, 6, 7, 8, 9]);
 
     if (kind === 0) {
-      // Zranienie: odporność mobilizuje się w okolicy, ale rana niesie też trochę tlenu i pożywienia.
-      toast('⚠ Stworzenie się zraniło! Układ odpornościowy rusza do rany');
+      // Zranienie: odporność mobilizuje się w okolicy, ale z rany długo napływa tlen i pożywienie.
+      toast('⚠ Stworzenie się zraniło! Odporność rusza do rany, z rany płynie pożywienie (35 s)');
       cam.flash(300, 220, 38, 38);
       cam.shake(350, 0.006);
       const biome = BIOMES[biomeAt(pl.x, pl.y).a];
@@ -1517,22 +1567,25 @@ export class GameScene extends Phaser.Scene {
         if (this.isVirus) this.spawnPrey(250);
         else this.spawnNutrient(150);
       }
+      this.evSpawnMul = 0.8;
+      this.evFeed = 2.5;
+      timed('rana', 35);
     } else if (kind === 1) {
-      toast('🌡 Gorączka! Komórki odpornościowe są szybsze (25 s)');
+      toast('🌡 Gorączka! Komórki odpornościowe są szybsze (45 s)');
       this.evSpeedMul = 1.25;
-      this.hostEventName = 'gorączka';
-      this.hostEventLeft = 25;
+      timed('gorączka', 45);
     } else if (kind === 2) {
-      toast('🍽 Stworzenie zjadło posiłek — wokół pełno pożywienia');
-      for (let i = 0; i < 16; i++) {
+      toast('🍽 Stworzenie je posiłek — przez dłuższą chwilę napływa pożywienie (40 s)');
+      for (let i = 0; i < 10; i++) {
         if (this.isVirus) this.spawnPrey(250);
         else this.spawnNutrient(120);
       }
+      this.evFeed = 1.4;
+      timed('posiłek', 40);
     } else if (kind === 3) {
-      toast('😴 Stworzenie śpi — odporność słabnie (30 s)');
+      toast('😴 Stworzenie śpi — odporność słabnie (50 s)');
       this.evSpawnMul = 2.5;
-      this.hostEventName = 'sen';
-      this.hostEventLeft = 30;
+      timed('sen', 50);
     } else if (kind === 5) {
       const p = this.openPoint(pl, 700, 1100, 80, 20);
       if (!p) {
@@ -1542,14 +1595,128 @@ export class GameScene extends Phaser.Scene {
       toast('💉 Stworzenie dostało SZCZEPIONKĘ! Wielki obrońca atakuje każdego patogena');
       cam.flash(400, 125, 211, 252);
       this.spawnBoss('vaccine', p);
-    } else {
-      // Kaszel/kichnięcie: wstrząs odrzuca wszystko w jedną stronę.
-      toast('💨 Stworzenie kicha! Wstrząs odrzuca wszystko');
-      cam.shake(500, 0.012);
+    } else if (kind === 6) {
+      if (this.isVirus) toast('💊 Antybiotyk! Na wirusy nie działa — bakterie słabną i giną (40 s)');
+      else toast('💊 Antybiotyk! Wszystkie bakterie, także Ty, tracą zdrowie (40 s)');
+      cam.flash(300, 250, 250, 250);
+      this.evAntibiotic = true;
+      timed('antybiotyk', 40);
+    } else if (kind === 7) {
       const a = Math.random() * Math.PI * 2;
-      const cells: Cell[] = [pl, ...this.enemies, ...this.allies];
-      for (let s = 0; s < 5; s++) for (const c of cells) c.tryMove(Math.cos(a) * 50, Math.sin(a) * 50);
+      toast('🌊 Silny prąd płynów ustrojowych! Wszystko dryfuje w jedną stronę (30 s)');
+      this.evDrift = { x: Math.cos(a) * 85, y: Math.sin(a) * 85 };
+      timed('prąd', 30);
+    } else if (kind === 8) {
+      toast('⚡ Adrenalina! Jesteś szybszy, ale odporność też przyspiesza (35 s)');
+      this.evPlayerSpeedMul = 1.3;
+      this.evSpeedMul = 1.1;
+      timed('adrenalina', 35);
+    } else if (kind === 9) {
+      toast('🔥 Burza cytokin! Odporność ściąga posiłki z całego ciała (35 s)');
+      cam.flash(300, 250, 120, 60);
+      this.evSpawnMul = 0.45;
+      this.evSpeedMul = 1.15;
+      timed('burza cytokin', 35);
+    } else {
+      // Atak kaszlu: seria wstrząsów odrzuca wszystko, za każdym razem w inną stronę.
+      toast('💨 Atak kaszlu! Seria wstrząsów odrzuca wszystko (12 s)');
+      for (let k = 0; k < 4; k++) this.time.delayedCall(k * 3500, () => this.sneezeGust());
+      timed('kaszel', 12);
     }
+  }
+
+  /**
+   * Utrata kończyny: losowa łapa/ręka/noga/skrzydło/płetwa/ogon (daleko od gracza) znika z ciała.
+   * Wszystko, co w niej było, ginie razem z nią.
+   */
+  private loseLimb(): boolean {
+    const pl = this.player;
+    const zone = startZone();
+    const limb = amputate((shapes) => {
+      const near = (x: number, y: number, m: number) => shapesDist(shapes, x, y) < m;
+      if (near(pl.x, pl.y, 2500)) return false;
+      if (zone && near(zone.x, zone.y, zone.r + 600)) return false;
+      if (this.posts.some((p) => near(p.x, p.y, 900))) return false;
+      return true;
+    });
+    if (!limb) return false;
+
+    this.walls.invalidate(limb.minX, limb.minY, limb.maxX, limb.maxY);
+    this.nav.resetCache();
+    // Co zostało poza ciałem — znika.
+    const outside = (o: { x: number; y: number }) => bodyDist(o.x, o.y) > -60;
+    const goneE = new Set(this.enemies.filter((e) => outside(e) && !e.def.boss && !e.missionTarget));
+    for (const e of goneE) e.destroy();
+    this.enemies = this.enemies.filter((e) => !goneE.has(e));
+    const sweep = <T extends Phaser.GameObjects.GameObject & { x: number; y: number }>(list: T[], keep?: T) =>
+      list.filter((o) => {
+        if (o === keep || !outside(o)) return true;
+        o.destroy();
+        return false;
+      });
+    this.nutrients = sweep(this.nutrients);
+    this.preyBacteria = sweep(this.preyBacteria);
+    this.hostCells = sweep(this.hostCells, this.convertTarget);
+    const lostStructures = this.structures.filter(outside).length;
+    this.structures = sweep(this.structures);
+
+    const what: Record<string, string> = { Łapa: 'łapę', Ręka: 'rękę', Noga: 'nogę', Skrzydło: 'skrzydło', Płetwy: 'płetwę', Ogon: 'ogon' };
+    const name = what[limb.name] ?? limb.name.toLowerCase();
+    this.lostLimbName = name;
+    this.game.events.emit(
+      GameEvents.MissionStart,
+      `🩸 ${currentAnimal().name} traci ${name}!`,
+      `Ta część ciała zniknęła na zawsze — zobacz mapę (${keyLabel('map')})${lostStructures ? `. Stracone budowle: ${lostStructures}` : ''}`,
+    );
+    this.cameras.main.shake(900, 0.014);
+    this.cameras.main.flash(500, 200, 20, 20);
+    this.achieve('amputee');
+    return true;
+  }
+
+  /** Jeden wstrząs kichnięcia/kaszlu. */
+  private sneezeGust(): void {
+    if (!this.player?.active || this.brainBoss) return;
+    this.cameras.main.shake(500, 0.012);
+    const a = Math.random() * Math.PI * 2;
+    const cells: Cell[] = [this.player, ...this.enemies.filter((e) => !e.def.boss), ...this.allies];
+    for (let s = 0; s < 5; s++) for (const c of cells) c.tryMove(Math.cos(a) * 50, Math.sin(a) * 50);
+  }
+
+  /** Skutki trwającego zdarzenia (co klatkę). */
+  private applyHostEvent(dt: number): void {
+    const pl = this.player;
+    if (this.evAntibiotic) {
+      for (const e of this.enemies) if (!isImmuneKind(e.kind) && e.kind !== 'virus' && !e.def.boss) e.hp -= 4 * dt;
+      // Gracza-bakterię antybiotyk osłabia, ale nie zabija (zostaje co najmniej 25% zdrowia).
+      if (!this.isVirus && pl.hp > pl.maxHp * 0.25) pl.hp -= pl.maxHp * 0.01 * dt;
+    }
+    if (this.evDrift) {
+      const dx = this.evDrift.x * dt;
+      const dy = this.evDrift.y * dt;
+      pl.tryMove(dx, dy);
+      for (const e of this.enemies) if (e.speed > 0 && !e.def.boss && !e.post) e.tryMove(dx, dy);
+      for (const a of this.allies) a.tryMove(dx, dy);
+    }
+    if (this.evFeed > 0) {
+      this.evFeedTimer -= dt;
+      if (this.evFeedTimer <= 0) {
+        this.evFeedTimer = this.evFeed;
+        if (this.isVirus) this.spawnPrey(300);
+        else this.spawnNutrient(220);
+      }
+    }
+  }
+
+  /** Kończy skutki zdarzenia. */
+  private clearHostEvent(): void {
+    this.evSpeedMul = 1;
+    this.evSpawnMul = 1;
+    this.evPlayerSpeedMul = 1;
+    this.evAntibiotic = false;
+    this.evDrift = null;
+    this.evFeed = 0;
+    this.evFeedTimer = 0;
   }
 
   // ───────────────────────── wrogowie ─────────────────────────
@@ -1572,8 +1739,9 @@ export class GameScene extends Phaser.Scene {
     // Rodzaj wroga zależy od biomu, w którym jest gracz.
     const biome = BIOMES[biomeAt(p.x, p.y).a];
     // Wirusa atakuje tylko układ odpornościowy; bakterię — patogeny i organizm (układ odpornościowy).
-    const weights: Partial<Record<EnemyKind, number>> = { ...biome.immune };
-    if (!this.isVirus) for (const [k, w] of Object.entries(biome.enemies) as [EnemyKind, number][]) weights[k] = (weights[k] ?? 0) + w;
+    // Martwy żywiciel: odporności już nie ma — przychodzą tylko rywalizujące kolonie.
+    const weights: Partial<Record<EnemyKind, number>> = this.isDeadHost ? {} : { ...biome.immune };
+    if (!this.isVirus || this.isDeadHost) for (const [k, w] of Object.entries(biome.enemies) as [EnemyKind, number][]) weights[k] = (weights[k] ?? 0) + w;
     const pool = (Object.entries(weights) as [EnemyKind, number][]).filter(([k]) => ENEMY_DEFS[k].minThreat <= t);
     const total = pool.reduce((s, [, w]) => s + w, 0);
     let r = Math.random() * total;
@@ -1918,6 +2086,7 @@ export class GameScene extends Phaser.Scene {
 
   private isPeaceful(e: Enemy): boolean {
     if (e.provoked) return false;
+    if (this.isDeadHost) return false; // rywale walczą o ciało
     if (this.isVirus) return !isImmuneKind(e.kind);
     return isImmuneKind(e.kind) && !e.def.boss && !e.missionTarget && !e.guardOf && !e.post;
   }
@@ -1968,7 +2137,7 @@ export class GameScene extends Phaser.Scene {
       for (const a of peaceful ? [] : this.allies) {
         if (dist(e, a) < a.radius + e.radius + 3) {
           e.hurt(s.allyDamage * a.damageMul * dt);
-          a.hp -= e.dps * s.armor * dt;
+          a.hp -= e.dps * s.armor * ALLY_TOUGHNESS * dt;
           hit = true;
           hurtAllies.add(a);
         }
@@ -2817,13 +2986,13 @@ export class GameScene extends Phaser.Scene {
     this.game.events.emit(GameEvents.Conquest, name, this.conquered.size, total);
     audio.sfx('success');
     this.gainXp(10);
-    if (this.conquered.size >= total) this.victory();
+    if (this.conquered.size >= total && !this.isDeadHost) this.victory();
   }
 
   /** Wygrana wirusa: cały organizm podbity. */
   private victory(): void {
     this.over = true;
-    this.achieve('conqueror');
+    if (!this.isDeadHost) this.achieve('conqueror');
     audio.sfx('levelup');
     audio.setTheme('menu');
     audio.setIntensity(0);
@@ -2835,9 +3004,122 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       kills: this.kills,
       missions: this.missionsDone,
+      area: this.terr?.mine,
+      ending: this.endingInfo(),
     };
     this.game.events.emit(GameEvents.Victory, summary);
   }
+
+  /** Co gracz zrobił w tej grze — UIScene dobiera do tego scenkę końcową. */
+  private endingInfo(): EndingInfo {
+    return {
+      animal: currentAnimal().name,
+      hard: this.mode === 'hard',
+      brain: this.brainDone,
+      conquered: this.conquered.size,
+      organs: this.organNames.length,
+      colony: this.allies.length,
+      structures: this.structures.length,
+      limb: this.lostLimbName,
+      rival: this.terr?.rival,
+    };
+  }
+
+  // ───────────────────────── tryb „Martwy żywiciel” ─────────────────────────
+
+  get isDeadHost(): boolean {
+    return this.mode === 'dead';
+  }
+
+  /** Dane dla HUD: zajęty ułamek ciała (Twój i rywali) i czas do rozkładu. */
+  get deadInfo(): { mine: number; rival: number; timeLeft: number } | undefined {
+    if (!this.terr) return undefined;
+    return { mine: this.terr.mine, rival: this.terr.rival, timeLeft: Math.max(0, DEAD_HOST.duration - this.elapsed) };
+  }
+
+  /** Start trybu: zalążek kolonii w strefie startowej i gniazda rywali daleko od gracza. */
+  private startDeadHost(): void {
+    const t = new Territory();
+    this.terr = t;
+    const pl = this.player;
+    t.paint(pl.x, pl.y, START_ZONE.radius, 2);
+    for (let n = 0; n < DEAD_HOST.rivalNests; n++) {
+      const p = t.randomBodyCell(pl.x, pl.y, 7000);
+      if (p) t.paint(p.x, p.y, TERR_CELL * 1.6, -2);
+    }
+    t.count();
+    this.drawTerritory();
+    // UIScene startuje klatkę później — komunikat z opóźnieniem, żeby go nie zgubić.
+    this.time.delayedCall(800, () =>
+      this.game.events.emit(
+        GameEvents.MissionStart,
+        '☠ Żywiciel umarł',
+        `Zajmij jak największy obszar ciała, zanim się rozłoży (${Math.round(DEAD_HOST.duration / 60)} min). Twoja kolonia i budowle zajmują teren, rywale go odbierają.`,
+      ),
+    );
+  }
+
+  /** Zajmowanie terytorium, samoistny rozrost, progi i koniec gry po rozkładzie ciała. */
+  private updateDeadHost(dt: number): void {
+    const t = this.terr;
+    if (!t) return;
+    const D = DEAD_HOST;
+    this.terrTick -= dt;
+    if (this.terrTick <= 0) {
+      const step = 0.25;
+      this.terrTick += step;
+      const pl = this.player;
+      let gained = t.paint(pl.x, pl.y, D.player.r, D.player.rate * step);
+      for (const a of this.allies) gained += t.paint(a.x, a.y, D.ally.r, D.ally.rate * step);
+      for (const s of this.structures) gained += t.paint(s.x, s.y, D.structure.r, D.structure.rate * step);
+      for (const e of this.enemies) if (!isImmuneKind(e.kind) && e.speed > 0) t.paint(e.x, e.y, D.rival.r, -D.rival.rate * step);
+      if (gained > 0) this.gainXp(gained * D.xpPerCell);
+      this.terrSpread += step;
+      if (this.terrSpread >= 1) {
+        this.terrSpread -= 1;
+        t.spread(D.spreadMine, D.spreadRival * (1 + this.elapsed / D.rivalGrowth));
+      }
+      t.count();
+      this.drawTerritory();
+
+      const toast = (m: string) => this.game.events.emit(GameEvents.Toast, m);
+      const MS = [0.1, 0.25, 0.5, 0.75];
+      while (this.terrMilestone < MS.length && t.mine >= MS[this.terrMilestone]) {
+        const p = Math.round(MS[this.terrMilestone++] * 100);
+        toast(`🦠 Twoja kolonia zajmuje już ${p}% ciała!`);
+        audio.sfx('success');
+        if (p >= 25) this.achieve(`dead-${p}`);
+      }
+      if (!this.terrWarned && D.duration - this.elapsed < 60) {
+        this.terrWarned = true;
+        toast('⏳ Ciało rozkłada się — została minuta!');
+      }
+    }
+    if (this.elapsed >= D.duration) this.victory();
+  }
+
+  /** Terytorium w świecie: miękkie plamy (zielone — Twoje, czerwone — rywali) wokół kamery. */
+  private drawTerritory(): void {
+    const t = this.terr;
+    const g = this.terrGfx;
+    if (!t || !g) return;
+    g.clear();
+    const v = this.cameras.main.worldView;
+    const i0 = Math.max(0, Math.floor((v.x - t.ox) / TERR_CELL) - 2);
+    const i1 = Math.min(t.cols - 1, Math.floor((v.right - t.ox) / TERR_CELL) + 2);
+    const j0 = Math.max(0, Math.floor((v.y - t.oy) / TERR_CELL) - 2);
+    const j1 = Math.min(t.rows - 1, Math.floor((v.bottom - t.oy) / TERR_CELL) + 2);
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = j * t.cols + i;
+        const val = t.v[k];
+        if (!t.body[k] || Math.abs(val) < 0.15) continue;
+        g.fillStyle(val > 0 ? 0x34d399 : 0xef4444, Math.min(1, Math.abs(val)) * 0.12);
+        g.fillCircle(t.cx(i), t.cy(j), TERR_CELL * 0.72);
+      }
+    }
+  }
+
 
   // ───────────────────────── przyjazne postacie (rzadkie) ─────────────────────────
 
@@ -2991,6 +3273,8 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       kills: this.kills,
       missions: this.missionsDone,
+      area: this.terr?.mine,
+      ending: this.endingInfo(),
     };
     this.game.events.emit(GameEvents.GameOver, summary);
   }

@@ -8,13 +8,16 @@ import { GameEvents, type GameSummary, type MissionType } from '../events';
 import type { Mutation } from '../mutations';
 import { isKey, keyLabel, keyName, settings } from '../settings';
 import { SPECIES } from '../species';
-import { SYSTEMS, currentAnimal, type Shape } from '../world/animal';
+import { SYSTEMS, bodyDist, currentAnimal, isLostShape, type Shape } from '../world/animal';
 import { BIOMES } from '../world/biomes';
 
 /** Kształt powiększony o `d` px (obrys skóry na dużej mapie). */
 const grow = (s: Shape, d: number): Shape =>
   s.kind === 'ellipse' ? { ...s, rx: s.rx + d, ry: s.ry + d } : { ...s, ra: s.ra + d, rb: s.rb + d };
+import { TERR_CELL } from '../world/territory';
 import { biomeAt, openness } from '../world/walls';
+import { TEX } from '../graphics/textures';
+import { buildEnding, type EndingVisual } from './ending';
 import { ORDER_NAMES, type GameScene } from './GameScene';
 
 /** Minimapa: rozmiar w px ekranu i ile px świata przypada na 1 px mapy. */
@@ -86,6 +89,7 @@ export class UIScene extends Phaser.Scene {
     this.convertPanel = undefined;
     this.overlay = undefined;
     this.pauseOverlay = undefined;
+    this.endingSkip = undefined;
 
     const base = { fontFamily: FONT, color: TEXT, shadow: SHADOW };
     this.hud = this.add.graphics();
@@ -121,11 +125,11 @@ export class UIScene extends Phaser.Scene {
       [GameEvents.ConvertOffer, () => this.showConvert()],
       [GameEvents.ConvertClose, () => this.closeConvert()],
       [GameEvents.Toast, (msg: string) => this.showToast(msg)],
-      [GameEvents.GameOver, (s: GameSummary) => this.showGameOver(s)],
+      [GameEvents.GameOver, (s: GameSummary) => this.playEnding(s, false)],
       [GameEvents.MissionStart, (title: string, subtitle: string) => this.onMissionStart(title, subtitle)],
       [GameEvents.MissionEnd, (title: string, success: boolean, detail: string, big?: boolean) => this.onMissionEnd(title, success, detail, big)],
       [GameEvents.Conquest, (name: string, done: number, total: number) => this.showBanner(`Podbito: ${name}`, `Podbój organizmu ${done} / ${total}`)],
-      [GameEvents.Victory, (s: GameSummary) => this.showGameOver(s, true)],
+      [GameEvents.Victory, (s: GameSummary) => this.playEnding(s, true)],
       [GameEvents.Friend, (msg: string) => this.showToast(msg)],
     ];
     for (const [name, fn] of handlers) ev.on(name, fn);
@@ -178,6 +182,11 @@ export class UIScene extends Phaser.Scene {
       lines.push(`Podbój organizmu ${c.done}/${c.total}${here}`);
     }
     lines.push(`Budowle ${g.structures.length}/${CONVERT.maxStructures}`);
+    const dead = g.deadInfo;
+    if (dead) {
+      lines.push(`☠ Teren kolonii ${Math.round(dead.mine * 100)}% · rywale ${Math.round(dead.rival * 100)}%`);
+      lines.push(`Rozkład ciała za ${formatTime(dead.timeLeft)}`);
+    }
     this.statsText.setText(lines);
 
     // Duże sloty umiejętności w lewym dolnym rogu: klawisz, nazwa, odliczanie i wypełnienie.
@@ -354,12 +363,18 @@ export class UIScene extends Phaser.Scene {
       g.fillCircle(bx, by, rb);
     };
     // Skóra (obrys) i tkanka.
-    for (const p of animal.parts) for (const s of p.shapes) shape(grow(s, 260), 0xf0a0b0, 0.9);
-    for (const p of animal.parts) for (const s of p.shapes) shape(s, 0x7a2840);
+    // Utracone kończyny nie są rysowane; kawałki narządów, które zostały poza ciałem, też nie.
+    const body = animal.parts.flatMap((p) => p.shapes).filter((s) => !isLostShape(s));
+    const inBody = (s: Shape) => {
+      const [cx, cy] = s.kind === 'ellipse' ? [s.x, s.y] : [(s.ax + s.bx) / 2, (s.ay + s.by) / 2];
+      return bodyDist(cx, cy) < 0;
+    };
+    for (const s of body) shape(grow(s, 260), 0xf0a0b0, 0.9);
+    for (const s of body) shape(s, 0x7a2840);
     // Narządy w kolorach układów (od najmniej ważnych — na wierzchu te o pierwszeństwie).
     for (const o of [...animal.organs].reverse()) {
       const color = o.name === 'Serce' ? 0xff3b3b : SYSTEMS[o.system].color;
-      for (const s of o.shapes) shape(s, color, o.channel ? 0.85 : 0.95);
+      for (const s of o.shapes) if (inBody(s)) shape(s, color, o.channel ? 0.85 : 0.95);
     }
     // Wirus: narządy już podbite — fioletowa nakładka.
     if (this.gs.isVirus) {
@@ -402,6 +417,18 @@ export class UIScene extends Phaser.Scene {
     if (!dots || !g.player) return;
     const { ox, oy, k } = this.bigMapView;
     dots.clear();
+    // Martwy żywiciel: terytorium (zielone — Twoje, czerwone — rywali).
+    const tr = g.terr;
+    if (tr) {
+      const cs = TERR_CELL * k;
+      for (let n = 0; n < tr.v.length; n++) {
+        const v = tr.v[n];
+        if (!tr.body[n] || Math.abs(v) <= 0.5) continue;
+        const i = n % tr.cols;
+        const j = (n - i) / tr.cols;
+        dots.fillStyle(v > 0 ? 0x34d399 : 0xef4444, 0.5).fillRect(ox + (tr.ox + i * TERR_CELL) * k, oy + (tr.oy + j * TERR_CELL) * k, cs + 0.5, cs + 0.5);
+      }
+    }
     for (const s of g.structures) dots.fillStyle(STRUCTURES[s.kind].tint, 1).fillRect(ox + s.x * k - 3, oy + s.y * k - 3, 6, 6);
     const m = g.missionInfo;
     if (m?.x !== undefined && m.y !== undefined) dots.fillStyle(missionColor(m.type), 1).fillCircle(ox + m.x * k, oy + m.y * k, 5);
@@ -492,6 +519,30 @@ export class UIScene extends Phaser.Scene {
     const dots = this.minimapDots;
     dots.clear();
     dots.lineStyle(2, 0x7a3a52, 1).strokeRect(x0 - 1, y0 - 1, S + 2, S + 2);
+
+    // Martwy żywiciel: zajęte pola na minimapie.
+    const tr = g.terr;
+    if (tr) {
+      const cs = TERR_CELL * k;
+      const half = (R * W) / 2 + TERR_CELL;
+      const i0 = Math.max(0, Math.floor((this.mmShown.x - half - tr.ox) / TERR_CELL));
+      const i1 = Math.min(tr.cols - 1, Math.floor((this.mmShown.x + half - tr.ox) / TERR_CELL));
+      const j0 = Math.max(0, Math.floor((this.mmShown.y - half - tr.oy) / TERR_CELL));
+      const j1 = Math.min(tr.rows - 1, Math.floor((this.mmShown.y + half - tr.oy) / TERR_CELL));
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const n = j * tr.cols + i;
+          const v = tr.v[n];
+          if (!tr.body[n] || Math.abs(v) <= 0.5) continue;
+          const p = toMap(tr.ox + i * TERR_CELL, tr.oy + j * TERR_CELL);
+          const ax = Math.max(x0, p.x);
+          const ay = Math.max(y0, p.y);
+          const bx = Math.min(x0 + S, p.x + cs);
+          const by = Math.min(y0 + S, p.y + cs);
+          if (bx > ax && by > ay) dots.fillStyle(v > 0 ? 0x34d399 : 0xef4444, 0.3).fillRect(ax, ay, bx - ax, by - ay);
+        }
+      }
+    }
 
     for (const e of g.enemies) {
       const p = toMap(e.x, e.y);
@@ -840,6 +891,11 @@ export class UIScene extends Phaser.Scene {
   private onKey(e: KeyboardEvent): void {
     // Edytor komórki i ustawienia mają własną obsługę klawiszy.
     if (this.scene.isActive('EditorScene') || this.scene.isActive('SettingsScene')) return;
+    // Scenka końcowa: dowolny klawisz ją pomija.
+    if (this.endingSkip) {
+      this.endingSkip();
+      return;
+    }
     if (this.overlay) {
       if (e.code === 'KeyR') this.restart();
       else if (e.code === 'KeyM') this.toMenu();
@@ -904,6 +960,144 @@ export class UIScene extends Phaser.Scene {
 
   // ───────────────────────── koniec gry ─────────────────────────
 
+  /** Jeśli trwa scenka końcowa — funkcja, która ją pomija. */
+  private endingSkip?: () => void;
+
+  /** Scenka na koniec gry (zależna od tego, co gracz zrobił), potem ekran wyników. */
+  private playEnding(s: GameSummary, victory: boolean): void {
+    this.mutationPanel?.destroy();
+    this.mutationPanel = undefined;
+    this.closeConvert();
+    const end = buildEnding(s, victory);
+    const { width, height } = this.scale;
+    const c = this.add.container(0, 0).setDepth(210);
+    const bg = this.add.rectangle(0, 0, width, height, 0x07020a, 1).setOrigin(0).setAlpha(0).setInteractive();
+    c.add(bg);
+    this.tweens.add({ targets: bg, alpha: 0.97, duration: 900 });
+
+    const cx = width / 2;
+    const cy = height * 0.43;
+    this.drawEndingVisual(c, end.visual, s, cx, cy, Math.min(width, height));
+
+    const title = this.add
+      .text(cx, height * 0.12, end.title, { fontFamily: FONT, fontSize: '34px', fontStyle: 'bold', color: end.color, stroke: '#07020a', strokeThickness: 6 })
+      .setOrigin(0.5)
+      .setAlpha(0);
+    title.setScale(Math.min(1, (width - 32) / Math.max(1, title.width)));
+    c.add(title);
+    this.tweens.add({ targets: title, alpha: 1, duration: 800, delay: 400 });
+
+    const capY = height * 0.72;
+    const caption = this.add
+      .text(cx, capY, '', { fontFamily: FONT, fontSize: '19px', color: '#f5e9ee', align: 'center', lineSpacing: 6, wordWrap: { width: Math.min(width - 40, 720) } })
+      .setOrigin(0.5, 0)
+      .setAlpha(0);
+    c.add(caption);
+    c.add(
+      this.add
+        .text(cx, height - 18, 'Dowolny klawisz lub kliknięcie — pomiń', { fontFamily: FONT, fontSize: '13px', color: MUTED })
+        .setOrigin(0.5, 1),
+    );
+
+    const STEP = 2800;
+    const timers: Phaser.Time.TimerEvent[] = [];
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      this.endingSkip = undefined;
+      for (const t of timers) t.remove();
+      this.showGameOver(s, victory);
+      this.tweens.add({ targets: c, alpha: 0, duration: 500, onComplete: () => c.destroy() });
+    };
+    end.lines.forEach((line, i) => {
+      timers.push(
+        this.time.delayedCall(1300 + i * STEP, () => {
+          caption.setText(line).setAlpha(0).setY(capY + 12);
+          this.tweens.add({ targets: caption, alpha: 1, y: capY, duration: 550, ease: 'Sine.easeOut' });
+        }),
+      );
+    });
+    timers.push(this.time.delayedCall(1300 + end.lines.length * STEP + 400, finish));
+    this.endingSkip = finish;
+    bg.on('pointerdown', finish);
+  }
+
+  /** Obrazek scenki końcowej. */
+  private drawEndingVisual(c: Phaser.GameObjects.Container, visual: EndingVisual, s: GameSummary, cx: number, cy: number, size: number): void {
+    const me = SPECIES[s.species].texture;
+    const R = size * 0.22;
+    const hunter = s.species === 'virus' ? TEX.antibody : TEX.macrophage;
+    const img = (key: string, x: number, y: number, scale: number) => {
+      const i = this.add.image(x, y, key).setScale(scale);
+      c.add(i);
+      return i;
+    };
+
+    if (visual === 'triumph') {
+      // Gasnący narząd i rój Twoich kopii rozlewający się na zewnątrz.
+      const organ = img(TEX.organ, cx, cy, 1.3);
+      this.tweens.add({ targets: organ, scale: 1.05, alpha: 0.35, duration: 6000 });
+      this.tweens.addCounter({ from: 255, to: 90, duration: 6000, onUpdate: (tw) => { const v = Math.round(tw.getValue() ?? 255); organ.setTint(Phaser.Display.Color.GetColor(v, v, v)); } });
+      for (let i = 0; i < 28; i++) {
+        const a = (i / 28) * Math.PI * 2;
+        const r = R * (0.7 + 0.6 * Math.random());
+        const copy = img(me, cx, cy, 0.3).setAlpha(0).setRotation(a);
+        this.tweens.add({ targets: copy, x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, alpha: 1, duration: 1600, delay: 300 + i * 110, ease: 'Cubic.easeOut' });
+        this.tweens.add({ targets: copy, angle: copy.angle + 360, duration: 6000 + Math.random() * 3000, repeat: -1 });
+      }
+      return;
+    }
+
+    if (visual === 'territory') {
+      // Martwe ciało jako siatka pól: zielone — Twoje, czerwone — rywali, szare — rozłożone.
+      const area = s.area ?? 0;
+      const rival = s.ending?.rival ?? 0;
+      const cols = 16;
+      const rows = 7;
+      const gap = Math.min(34, (size * 1.1) / cols);
+      const n = cols * rows;
+      const mine = Math.round(area * n);
+      const theirs = Math.min(n - mine, Math.round(rival * n));
+      const order = Phaser.Utils.Array.Shuffle([...Array(n).keys()]);
+      order.forEach((k, idx) => {
+        const i = k % cols;
+        const j = Math.floor(k / cols);
+        const color = idx < mine ? 0x34d399 : idx < mine + theirs ? 0xef4444 : 0x4b3a40;
+        const dot = this.add.circle(cx + (i - (cols - 1) / 2) * gap, cy + (j - (rows - 1) / 2) * gap, gap * 0.4, color, 1).setAlpha(0).setScale(0.3);
+        c.add(dot);
+        this.tweens.add({ targets: dot, alpha: idx < mine + theirs ? 0.95 : 0.5, scale: 1, duration: 400, delay: 600 + idx * 22 });
+      });
+      return;
+    }
+
+    // Śmierć: gracz w środku, wrogowie się zbliżają, gracz gaśnie.
+    const player = img(me, cx, cy, visual === 'short' ? 0.55 : 0.85);
+    if (visual === 'legend') {
+      const glow = img(TEX.blob, cx, cy, 14).setTint(0xfde68a).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.5);
+      this.tweens.add({ targets: glow, alpha: 0.15, scale: 18, duration: 1400, yoyo: true, repeat: -1 });
+      // Ślady pokonanych wrogów.
+      const marks = Math.min(70, Math.max(12, Math.round(s.kills / 6)));
+      for (let i = 0; i < marks; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = R * (0.8 + Math.random() * 0.9);
+        const d = this.add.circle(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 2 + Math.random() * 3, 0xef4444, 1).setAlpha(0);
+        c.add(d);
+        this.tweens.add({ targets: d, alpha: 0.7, duration: 500, delay: 200 + i * 40 });
+      }
+    }
+    const count = visual === 'short' ? 1 : visual === 'legend' ? 7 : 5;
+    for (let i = 0; i < count; i++) {
+      const a = visual === 'short' ? Math.PI : (i / count) * Math.PI * 2 + 0.4;
+      const start = R * 1.9;
+      const stop = visual === 'short' ? R * 0.05 : R * 0.42;
+      const h = img(hunter, cx + Math.cos(a) * start, cy + Math.sin(a) * start, visual === 'short' ? 1.4 : 0.8).setAlpha(0);
+      this.tweens.add({ targets: h, alpha: 1, duration: 600, delay: 300 + i * 120 });
+      this.tweens.add({ targets: h, x: cx + Math.cos(a) * stop, y: cy + Math.sin(a) * stop, duration: 3800, delay: 500 + i * 120, ease: 'Sine.easeInOut' });
+    }
+    this.tweens.add({ targets: player, alpha: visual === 'legend' ? 0.35 : 0.08, scale: player.scale * 0.75, angle: 40, duration: 4200, delay: 1200 });
+  }
+
   private showGameOver(s: GameSummary, victory = false): void {
     this.mutationPanel?.destroy();
     this.mutationPanel = undefined;
@@ -915,7 +1109,9 @@ export class UIScene extends Phaser.Scene {
 
     c.add(
       this.add
-        .text(width / 2, height / 2 - 60, victory ? `${currentAnimal().inside.replace('Wnętrze', 'Organizm')} podbity! Wygrana!` : SPECIES[s.species].deathText, {
+        .text(width / 2, height / 2 - 60, s.area !== undefined && victory
+          ? `Ciało się rozłożyło — Twoja kolonia zajęła ${Math.round(s.area * 100)}%!`
+          : victory ? `${currentAnimal().inside.replace('Wnętrze', 'Organizm')} podbity! Wygrana!` : SPECIES[s.species].deathText, {
           fontFamily: FONT,
           fontSize: '32px',
           fontStyle: 'bold',
@@ -925,7 +1121,7 @@ export class UIScene extends Phaser.Scene {
     );
     c.add(
       this.add
-        .text(width / 2, height / 2 - 10, `Czas ${formatTime(s.time)}   ·   Poziom ${s.level}   ·   Zabici ${s.kills}   ·   Zadania ${s.missions}`, {
+        .text(width / 2, height / 2 - 10, `Czas ${formatTime(s.time)}   ·   Poziom ${s.level}   ·   Zabici ${s.kills}   ·   Zadania ${s.missions}${s.area !== undefined ? `   ·   Teren ${Math.round(s.area * 100)}%` : ''}`, {
           fontFamily: FONT,
           fontSize: '18px',
           color: TEXT,

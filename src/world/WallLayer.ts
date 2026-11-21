@@ -79,6 +79,23 @@ export class WallLayer {
     this.job = undefined;
   }
 
+  /** Usuwa kafle w prostokącie (świat się zmienił, np. utrata kończyny) — narysują się od nowa. */
+  invalidate(minX: number, minY: number, maxX: number, maxY: number): void {
+    const i0 = Math.floor(minX / CHUNK) - 1;
+    const i1 = Math.floor(maxX / CHUNK) + 1;
+    const j0 = Math.floor(minY / CHUNK) - 1;
+    const j1 = Math.floor(maxY / CHUNK) + 1;
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const key = this.key(i, j);
+        this.chunks.get(key)?.destroy();
+        this.chunks.delete(key);
+        if (this.scene.textures.exists(key)) this.scene.textures.remove(key);
+      }
+    }
+    if (this.job && this.job.i >= i0 && this.job.i <= i1 && this.job.j >= j0 && this.job.j <= j1) this.job = undefined;
+  }
+
   /** Generuje kafel od razu (używane w testach/pomiarach). */
   create(i: number, j: number): void {
     const job = this.startJob(i, j);
