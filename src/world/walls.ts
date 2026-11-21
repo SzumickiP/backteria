@@ -1,4 +1,4 @@
-import { bodyDist, currentAnimal, regionAt, type RegionSample } from './animal';
+import { arenaOpenness, bodyDist, currentAnimal, regionAt, type RegionSample } from './animal';
 import type { BiomeId } from './biomes';
 
 /**
@@ -134,6 +134,38 @@ const OPEN: Record<BiomeId, (x: number, y: number) => number> = {
   gut: openGut,
 };
 
+/**
+ * Sieć krętych łączników we wszystkich biomach: zerowe poziomice dwóch szumów o różnej skali
+ * tworzą długie, przecinające się korytarze (ok. 120–150 px), które spinają osobne kieszenie w całość.
+ */
+function connectors(x: number, y: number): number {
+  const a = 0.034 - Math.abs(perlin(x / 2600, y / 2600, 131)) * 0.9;
+  const b = 0.03 - Math.abs(perlin(x / 3600 + 11.3, y / 3600 - 7.1, 132)) * 0.9;
+  return Math.max(a, b);
+}
+
+const ROOM_CELL = 1500;
+
+/**
+ * Komory: w części komórek siatki (1500 px) okrągła, organicznie poszarpana przestrzeń.
+ * Komora mieści się w swojej komórce, więc wystarczy sprawdzić jedną.
+ */
+function chamber(x: number, y: number): number {
+  const ci = Math.floor(x / ROOM_CELL);
+  const cj = Math.floor(y / ROOM_CELL);
+  if (hash01(ci, cj, 141) > 0.32) return -1;
+  const r = 200 + 150 * hash01(ci, cj, 142);
+  const m = r + 90;
+  const cx = ci * ROOM_CELL + m + (ROOM_CELL - 2 * m) * hash01(ci, cj, 143);
+  const cy = cj * ROOM_CELL + m + (ROOM_CELL - 2 * m) * hash01(ci, cj, 144);
+  const dx = x - cx;
+  const dy = y - cy;
+  if (Math.abs(dx) > m || Math.abs(dy) > m) return -1;
+  // Poszarpany brzeg (wypustki tkanki) zamiast idealnego koła.
+  const edge = r * (1 + 0.18 * perlin(x / 160, y / 160, 145));
+  return (edge - Math.hypot(dx, dy)) / 700;
+}
+
 export function openness(x: number, y: number): number {
   return opennessIn(x, y, biomeAt(x, y));
 }
@@ -146,9 +178,11 @@ export function opennessIn(x: number, y: number, s: BiomeSample): number {
   let o = OPEN[s.a](x, y);
   // Płynne przejście kształtu ścian na granicy biomów.
   if (s.t >= 0.01) o = o * (1 - s.t) + OPEN[s.b](x, y) * s.t;
+  // Łączniki i komory: mniej ślepych zaułków i zamkniętych kieszeni, więcej miejsca do walki.
+  o = Math.max(o, connectors(x, y), chamber(x, y));
   // Kanały układów (naczynia, przewód pokarmowy, tchawica, rdzeń) — zawsze przejezdne.
   o = Math.max(o, s.channel);
-  return Math.min(o, skin);
+  return Math.min(arenaOpenness(x, y, o), skin);
 }
 
 export const isWall = (x: number, y: number): boolean => openness(x, y) < 0;

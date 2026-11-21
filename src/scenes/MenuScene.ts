@@ -89,7 +89,7 @@ export class MenuScene extends Phaser.Scene {
 
     const narrow = width < 640;
     const cardW = narrow ? Math.min(340, width - 32) : 300;
-    const cardH = narrow ? 250 : 300;
+    const cardH = narrow ? 290 : 300;
     const gap = 24;
     const top = height * 0.14 + 198;
 
@@ -143,14 +143,29 @@ export class MenuScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       out.on('pointerdown', () => this.game.events.emit(GameEvents.Logout));
 
+      // Rekordy: wyraźne złote tabliczki — pod kartami (szeroki ekran) albo na górze karty (wąski).
       ORDER.forEach((id, i) => {
         const best = acc.best[id];
         const x = narrow ? width / 2 : width / 2 - cardW - gap / 2 + i * (cardW + gap) + cardW / 2;
-        const y = narrow ? top + i * (cardH + 16) + cardH - 22 : top + cardH - 26;
+        const y = narrow ? top + i * (cardH + 16) + cardH - 44 : top + cardH + 12;
         const t = best
-          ? `Rekord: ${Math.floor(best.time / 60)}:${String(Math.floor(best.time % 60)).padStart(2, '0')} · poziom ${best.level}`
-          : 'Rekord: —';
-        this.add.text(x, y, t, { fontFamily: FONT, fontSize: '13px', color: '#fde68a' }).setOrigin(0.5, 0);
+          ? `🏆 Rekord — ${SPECIES[id].name}: ${Math.floor(best.time / 60)}:${String(Math.floor(best.time % 60)).padStart(2, '0')}  ·  poziom ${best.level}`
+          : `🏆 Rekord — ${SPECIES[id].name}: jeszcze brak`;
+        const label = this.add
+          .text(x, y, t, {
+            fontFamily: FONT,
+            fontSize: narrow ? '15px' : '17px',
+            fontStyle: 'bold',
+            color: best ? '#fde68a' : '#c9b48a',
+            backgroundColor: best ? '#3b2608' : '#24161a',
+            padding: { x: 14, y: 7 },
+          })
+          .setOrigin(0.5, 0);
+        // Złota ramka wokół tabliczki.
+        this.add
+          .rectangle(label.x, label.y + label.height / 2, label.width + 4, label.height + 4)
+          .setStrokeStyle(2, best ? 0xfbbf24 : 0x6b5a3a)
+          .setOrigin(0.5);
       });
     }
 

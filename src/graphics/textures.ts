@@ -27,6 +27,11 @@ export const TEX = {
   toxigen: 'toxigen',
   mycobacterium: 'mycobacterium',
   spirochete: 'spirochete',
+  pneumococcus: 'pneumococcus',
+  clostridium: 'clostridium',
+  staphylococcus: 'staphylococcus',
+  meningococcus: 'meningococcus',
+  necrobacter: 'necrobacter',
   organ: 'organ',
   rbc: 'rbc',
   protein: 'protein',
@@ -122,6 +127,37 @@ export function createTextures(scene: Phaser.Scene): void {
     }),
   );
   make(scene, TEX.coccus, 52, 52, drawCoccus);
+  make(scene, TEX.staphylococcus, 52, 52, (c, w, h) => drawCoccus(c, w, h, { light: '#fefce8', mid: '#facc15', dark: '#854d0e', line: '#713f12' }));
+  make(scene, TEX.meningococcus, 52, 52, (c, w, h) => drawCoccus(c, w, h, { light: '#fdf4ff', mid: '#e879f9', dark: '#86198f', line: '#701a75' }));
+  make(scene, TEX.pneumococcus, 140, 92, (c, w, h) =>
+    drawRod(c, w, h, { light: '#eff6ff', mid: '#60a5fa', dark: '#1e3a8a', membrane: '#1e40af', granule: '#172554', pili: true, seed: 'pneumo' }),
+  );
+  make(scene, TEX.clostridium, 140, 92, (c, w, h) =>
+    drawRod(c, w, h, {
+      light: '#ffedd5', mid: '#fb923c', dark: '#9a3412', membrane: '#7c2d12', granule: '#431407', pili: false, seed: 'clostr',
+      extra: (ctx, hl) => {
+        // Zgrubienie przetrwalnika na końcu.
+        ctx.fillStyle = 'rgba(254,215,170,0.9)';
+        ctx.beginPath();
+        ctx.ellipse(hl - 14, 0, 9, 11, 0, 0, TAU);
+        ctx.fill();
+      },
+    }),
+  );
+  make(scene, TEX.necrobacter, 140, 92, (c, w, h) =>
+    drawRod(c, w, h, {
+      light: '#d6d3d1', mid: '#57534e', dark: '#1c1917', membrane: '#0c0a09', granule: '#ef4444', pili: false, seed: 'necro',
+      extra: (ctx, hl) => {
+        // Żarzące się czerwone ogniska — zapowiedź wybuchu.
+        for (const [x, y, r] of [[-hl + 16, -5, 4], [4, 6, 3.5], [hl - 18, -3, 4]]) {
+          ctx.fillStyle = 'rgba(248,113,113,0.95)';
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+      },
+    }),
+  );
   make(scene, TEX.spore, 32, 32, drawSpore);
   make(scene, TEX.spirochete, 140, 44, drawSpirochete);
   make(scene, TEX.antibody, 60, 60, drawAntibody);
@@ -350,20 +386,28 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
   const hw = TEX_RADIUS.rod * 0.75;
   ctx.translate(w / 2, h / 2);
 
-  // Miękki cień / halo.
+  // Cień kropli: miękki i przesunięty, z jasną kaustyką w środku (ciało skupia światło jak soczewka).
   ctx.save();
+  ctx.translate(3, 5);
+  ctx.filter = 'blur(6px)';
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  capsule(ctx, hl + 1, hw + 1);
+  ctx.fill();
   ctx.filter = 'blur(5px)';
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  capsule(ctx, hl + 2, hw + 2);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = p.light;
+  ctx.beginPath();
+  ctx.ellipse(hl * 0.1, hw * 0.15, hl * 0.55, hw * 0.35, 0, 0, TAU);
   ctx.fill();
   ctx.restore();
 
-  // Fimbrie (włoski) — tylko u chorobotwórczych.
+  // Fimbrie (włoski) — tylko u chorobotwórczych; cienkie i przejrzyste.
   if (p.pili) {
     ctx.save();
     ctx.strokeStyle = p.membrane;
-    ctx.globalAlpha = 0.8;
-    ctx.lineWidth = 1.4;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1.2;
     ctx.lineCap = 'round';
     for (let i = 0; i < 60; i++) {
       const pt = capsulePoint(rng, hl, hw);
@@ -382,32 +426,33 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
     ctx.restore();
   }
 
-  // Ciało komórki.
+  // Ciało: półprzezroczyste jak kropla — środek przejrzysty, brzegi gęstsze (efekt Fresnela).
+  ctx.save();
+  capsule(ctx, hl, hw);
+  ctx.clip();
   const gr = ctx.createLinearGradient(0, -hw, 0, hw);
   gr.addColorStop(0, p.light);
   gr.addColorStop(0.45, p.mid);
   gr.addColorStop(1, p.dark);
-  ctx.save();
-  ctx.globalAlpha = 0.94;
-  capsule(ctx, hl, hw);
+  ctx.globalAlpha = 0.5;
   ctx.fillStyle = gr;
-  ctx.fill();
-  ctx.restore();
+  ctx.fillRect(-hl, -hw, hl * 2, hw * 2);
 
-  // Wnętrze: przyciemnione brzegi, nukleoid, ziarnistości, odblask.
-  ctx.save();
-  capsule(ctx, hl, hw);
-  ctx.clip();
-
-  ctx.filter = 'blur(4px)';
-  ctx.lineWidth = 12;
-  ctx.strokeStyle = p.dark;
+  ctx.filter = 'blur(5px)';
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = p.mid;
   ctx.globalAlpha = 0.55;
   capsule(ctx, hl, hw);
   ctx.stroke();
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = p.dark;
+  ctx.globalAlpha = 0.45;
+  capsule(ctx, hl, hw);
+  ctx.stroke();
 
-  ctx.filter = 'blur(2.5px)';
-  ctx.globalAlpha = 0.4;
+  // Wnętrze widziane „przez płyn”: rozmyte, przygaszone ziarnistości i nukleoid.
+  ctx.filter = 'blur(3px)';
+  ctx.globalAlpha = 0.25;
   ctx.fillStyle = p.granule;
   for (let i = 0; i < 5; i++) {
     ctx.beginPath();
@@ -423,32 +468,22 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
     ctx.fill();
   }
 
-  ctx.filter = 'none';
-  for (let i = 0; i < 22; i++) {
-    ctx.globalAlpha = 0.25 + rng.frac() * 0.3;
+  ctx.filter = 'blur(0.6px)';
+  for (let i = 0; i < 18; i++) {
+    ctx.globalAlpha = 0.15 + rng.frac() * 0.2;
     ctx.fillStyle = rng.frac() < 0.5 ? p.granule : p.light;
     ctx.beginPath();
     ctx.arc(rng.realInRange(-hl + 8, hl - 8), rng.realInRange(-hw + 6, hw - 6), 1 + rng.frac() * 1.8, 0, TAU);
     ctx.fill();
   }
-
-  // Rybosomy: gęsta, drobna ziarnistość cytoplazmy (jak na zdjęciu z mikroskopu elektronowego).
-  for (let i = 0; i < 140; i++) {
-    const rx = rng.realInRange(-hl + 6, hl - 6);
-    const ry = rng.realInRange(-hw + 5, hw - 5);
-    ctx.globalAlpha = 0.18 + rng.frac() * 0.22;
+  for (let i = 0; i < 80; i++) {
+    ctx.globalAlpha = 0.08 + rng.frac() * 0.14;
     ctx.fillStyle = p.granule;
     ctx.beginPath();
-    ctx.arc(rx, ry, 0.7 + rng.frac() * 0.9, 0, TAU);
-    ctx.fill();
-    ctx.globalAlpha = 0.12;
-    ctx.fillStyle = p.light;
-    ctx.beginPath();
-    ctx.arc(rx - 0.6, ry - 0.6, 0.6, 0, TAU);
+    ctx.arc(rng.realInRange(-hl + 6, hl - 6), rng.realInRange(-hw + 5, hw - 5), 0.7 + rng.frac() * 0.9, 0, TAU);
     ctx.fill();
   }
-  // Plazmidy: małe kółka DNA obok nukleoidu.
-  ctx.globalAlpha = 0.45;
+  ctx.globalAlpha = 0.28;
   ctx.strokeStyle = p.granule;
   ctx.lineWidth = 1.2;
   for (const [px, py, pr] of [[hl * 0.6, -hw * 0.3, 4.5], [-hl * 0.62, hw * 0.35, 3.8], [hl * 0.15, hw * 0.5, 3.2]]) {
@@ -456,11 +491,7 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
     ctx.ellipse(px, py, pr, pr * 0.75, rng.frac() * Math.PI, 0, TAU);
     ctx.stroke();
   }
-
-  // Nukleoid: poskręcana nić DNA w środku komórki.
-  ctx.filter = 'none';
-  ctx.globalAlpha = 0.5;
-  ctx.strokeStyle = p.granule;
+  ctx.globalAlpha = 0.32;
   ctx.lineWidth = 1.6;
   ctx.lineCap = 'round';
   for (let k = 0; k < 3; k++) {
@@ -473,31 +504,63 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
     ctx.stroke();
   }
 
-  // Dolne światło odbite (refleks od podłoża) i ostry odblask na górze.
+  // Załamanie światła: jasny sierp przy dolnej krawędzi (naprzeciw odblasku), jak w kropli wody.
   ctx.filter = 'blur(3px)';
-  ctx.globalAlpha = 0.28;
+  ctx.globalAlpha = 0.5;
   ctx.fillStyle = p.light;
   ctx.beginPath();
-  ctx.ellipse(hl * 0.1, hw * 0.62, hl * 0.6, hw * 0.16, 0, 0, TAU);
+  ctx.ellipse(hl * 0.1, hw * 0.6, hl * 0.62, hw * 0.17, 0, 0, TAU);
   ctx.fill();
-  ctx.globalAlpha = 0.55;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(hl * 0.15, hw * 0.66, hl * 0.4, hw * 0.08, 0, 0, TAU);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Zmarszczki powierzchni — delikatne, faliste refleksy.
+  ctx.filter = 'blur(0.8px)';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.2;
+  for (let k = 0; k < 3; k++) {
+    ctx.globalAlpha = 0.09 + k * 0.03;
+    ctx.beginPath();
+    for (let x = -hl * 0.7; x <= hl * 0.7; x += 4) {
+      const y = -hw * 0.2 + k * hw * 0.22 + Math.sin(x * 0.09 + k * 1.7) * hw * 0.08;
+      if (x === -hl * 0.7) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Odblaski: szeroki miękki na górze, ostre „okienka” światła i drobny błysk na dole.
+  ctx.filter = 'blur(3px)';
+  ctx.globalAlpha = 0.5;
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.ellipse(-hl * 0.1, -hw * 0.5, hl * 0.55, hw * 0.18, 0, 0, TAU);
   ctx.fill();
   ctx.filter = 'none';
-  ctx.globalAlpha = 0.9;
+  ctx.globalAlpha = 0.95;
   ctx.beginPath();
-  ctx.ellipse(-hl * 0.32, -hw * 0.56, hl * 0.14, hw * 0.07, 0, 0, TAU);
+  ctx.ellipse(-hl * 0.34, -hw * 0.55, hl * 0.17, hw * 0.08, -0.08, 0, TAU);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(hl * 0.02, -hw * 0.6, 2.2, 0, TAU);
+  ctx.fill();
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.arc(hl * 0.62, hw * 0.42, 1.6, 0, TAU);
   ctx.fill();
   ctx.restore();
 
-  // Światło krawędziowe od dołu-lewej (efekt trójwymiarowego, wilgotnego ciała).
+  // Światło krawędziowe od dołu-lewej (wilgotny połysk).
   ctx.save();
   capsule(ctx, hl - 1, hw - 1);
   ctx.clip();
   const rim = ctx.createLinearGradient(-hl, hw, hl * 0.2, -hw * 0.2);
-  rim.addColorStop(0, 'rgba(255,255,255,0.28)');
+  rim.addColorStop(0, 'rgba(255,255,255,0.35)');
   rim.addColorStop(0.35, 'rgba(255,255,255,0)');
   ctx.strokeStyle = rim;
   ctx.lineWidth = 6;
@@ -506,26 +569,24 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
   ctx.stroke();
   ctx.restore();
 
-  // Błona (podwójna: zewnętrzna ciemna + ściana komórkowa z jasną krawędzią).
-  ctx.lineWidth = 3.5;
+  // Błona jak menisk: cienka ciemna linia i jasny, szklisty brzeg wewnątrz.
+  ctx.globalAlpha = 0.75;
+  ctx.lineWidth = 2;
   ctx.strokeStyle = p.membrane;
   capsule(ctx, hl, hw);
   ctx.stroke();
-  ctx.lineWidth = 1.6;
-  ctx.strokeStyle = p.light;
-  ctx.globalAlpha = 0.5;
-  capsule(ctx, hl - 2.5, hw - 2.5);
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = '#ffffff';
+  capsule(ctx, hl - 1.8, hw - 1.8);
   ctx.stroke();
   ctx.globalAlpha = 1;
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  capsule(ctx, hl - 5, hw - 5);
-  ctx.stroke();
 
   if (p.extra) {
     ctx.save();
     capsule(ctx, hl - 1, hw - 1);
     ctx.clip();
+    ctx.globalAlpha = 0.75;
     p.extra(ctx, hl, hw);
     ctx.restore();
   }
@@ -534,42 +595,97 @@ function drawRod(ctx: Ctx, w: number, h: number, p: RodPalette): void {
 // ───────────────────────── inne bakterie ─────────────────────────
 
 /** Ziarniak (np. gronkowiec) — kulista bakteria Gram-dodatnia (fioletowa). */
-function drawCoccus(ctx: Ctx, w: number, h: number): void {
+interface CoccusPalette { light: string; mid: string; dark: string; line: string }
+const COCCUS_PURPLE: CoccusPalette = { light: '#f5e8ff', mid: '#b46cf5', dark: '#5b1a8f', line: '#4c1d95' };
+
+function drawCoccus(ctx: Ctx, w: number, h: number, pal: CoccusPalette = COCCUS_PURPLE): void {
   const R = TEX_RADIUS.coccus;
   ctx.translate(w / 2, h / 2);
+  const circle = (r: number) => {
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, TAU);
+  };
+  // Cień z kaustyką (jak pod kroplą).
   ctx.save();
+  ctx.translate(2, 3);
   ctx.filter = 'blur(4px)';
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  circle(R + 1);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = pal.light;
   ctx.beginPath();
-  ctx.arc(0, 0, R + 2, 0, TAU);
+  ctx.arc(1, 2, R * 0.45, 0, TAU);
   ctx.fill();
   ctx.restore();
 
+  ctx.save();
+  circle(R);
+  ctx.clip();
   const g = ctx.createRadialGradient(-6, -7, 2, 0, 0, R);
-  g.addColorStop(0, '#f5e8ff');
-  g.addColorStop(0.45, '#b46cf5');
-  g.addColorStop(1, '#5b1a8f');
+  g.addColorStop(0, pal.light);
+  g.addColorStop(0.45, pal.mid);
+  g.addColorStop(1, pal.dark);
+  ctx.globalAlpha = 0.5;
   ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(0, 0, R, 0, TAU);
-  ctx.fill();
-  // Przegroda podziałowa.
-  ctx.strokeStyle = 'rgba(70,20,110,0.5)';
+  ctx.fillRect(-R, -R, R * 2, R * 2);
+  // Gęstsze brzegi (Fresnel).
+  ctx.filter = 'blur(3px)';
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = pal.mid;
+  ctx.globalAlpha = 0.55;
+  circle(R);
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = pal.dark;
+  ctx.globalAlpha = 0.4;
+  circle(R);
+  ctx.stroke();
+  // Przegroda podziałowa widziana przez płyn.
+  ctx.filter = 'blur(0.6px)';
+  ctx.globalAlpha = 0.3;
+  ctx.strokeStyle = pal.line;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(-R * 0.8, R * 0.25);
   ctx.quadraticCurveTo(0, R * 0.05, R * 0.8, R * 0.3);
   ctx.stroke();
-  ctx.strokeStyle = '#4c1d95';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(0, 0, R, 0, TAU);
-  ctx.stroke();
+  // Sierp załamanego światła u dołu.
   ctx.filter = 'blur(2px)';
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = pal.light;
   ctx.beginPath();
-  ctx.ellipse(-6, -8, 6, 3, -0.5, 0, TAU);
+  ctx.ellipse(2, R * 0.62, R * 0.6, R * 0.2, 0, 0, TAU);
   ctx.fill();
+  // Odblaski.
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(-5, -8, 8, 4, -0.5, 0, TAU);
+  ctx.fill();
+  ctx.filter = 'none';
+  ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.ellipse(-7, -9, 3.5, 1.8, -0.5, 0, TAU);
+  ctx.fill();
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.arc(R * 0.55, R * 0.45, 1.3, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+  // Menisk.
+  ctx.globalAlpha = 0.75;
+  ctx.strokeStyle = pal.line;
+  ctx.lineWidth = 1.6;
+  circle(R);
+  ctx.stroke();
+  ctx.globalAlpha = 0.4;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.2;
+  circle(R - 1.6);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 /** Przetrwalnik — twarda, lśniąca spora. */

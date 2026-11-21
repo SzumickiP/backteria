@@ -11,6 +11,22 @@ import { UIScene } from './scenes/UIScene';
 import { currentAnimal } from './world/animal';
 import { biomeAt, openness } from './world/walls';
 
+/**
+ * Ostry tekst: Phaser domyślnie rysuje napisy w rozdzielczości 1:1, przez co przy skalowaniu ekranu
+ * (125–200% w Windows, ekrany Retina) są rozmyte. Każdy tekst dostaje rozdzielczość ekranu,
+ * delikatny cień dla czytelności na tle gry i lepsze wygładzanie czcionki.
+ */
+const TEXT_RES = Math.min(3, Math.max(1.5, window.devicePixelRatio || 1));
+const factory = Phaser.GameObjects.GameObjectFactory.prototype as unknown as {
+  text: (x: number, y: number, text: string | string[], style?: Phaser.Types.GameObjects.Text.TextStyle) => Phaser.GameObjects.Text;
+};
+const baseText = factory.text;
+factory.text = function (x, y, text, style = {}) {
+  const t = baseText.call(this, x, y, text, { resolution: TEXT_RES, ...style });
+  if (!style.shadow && !style.backgroundColor) t.setShadow(0, 1, 'rgba(0,0,0,0.55)', 2, false, true);
+  return t;
+};
+
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game',

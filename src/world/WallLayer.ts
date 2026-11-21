@@ -196,29 +196,50 @@ export class WallLayer {
       const diry = gy / gm;
       const dist = Math.abs(o) / gm; // odległość od krawędzi w px świata
 
+      const deep = mixRgb(A.wallDeep, B.wallDeep, bs.t);
+      const rimC = mixRgb(A.rim, B.rim, bs.t);
+
       if (o > 0) {
-        // Wolna przestrzeń: delikatne zabarwienie podłoża + miękki cień ściany (padający w prawo-dół).
+        // Wolna przestrzeń: zabarwienie podłoża, miękki cień ściany (w prawo-dół, w kolorze głębi tkanki)
+        // i delikatna poświata światła przechodzącego przez cienką krawędź tkanki.
         let shadowA = 0;
-        if (dist < 140) {
+        let glowA = 0;
+        if (dist < 160) {
           const facing = dirx * 0.64 + diry * 0.77;
-          shadowA = Math.exp(-dist / 30) * 0.5 * Math.min(1.2, Math.max(0.35, 0.8 + 0.5 * facing));
+          shadowA = Math.exp(-dist / 34) * 0.55 * Math.min(1.2, Math.max(0.3, 0.8 + 0.5 * facing));
+          glowA = Math.exp(-dist / 10) * 0.16 * Math.max(0, 0.4 - facing);
         }
-        const sa = shadowA + floorA * (1 - shadowA);
-        if (sa < 0.004) {
+        // Płyn: subtelne, wolnozmienne zmętnienie (zamiast jednolitego tła).
+        const murk = floorA > 0 ? floorA * (0.75 + 0.5 * (0.5 + 0.5 * perlin(wx * 0.004, wy * 0.004, 95))) : 0;
+        const sc0 = deep[0] * 0.18;
+        const sc1 = deep[1] * 0.12;
+        const sc2 = deep[2] * 0.16;
+        // Składanie warstw (podłoże → cień → poświata), operator „over”.
+        let a = murk;
+        let r = floor[0] * murk;
+        let g = floor[1] * murk;
+        let b = floor[2] * murk;
+        r = sc0 * shadowA + r * (1 - shadowA);
+        g = sc1 * shadowA + g * (1 - shadowA);
+        b = sc2 * shadowA + b * (1 - shadowA);
+        a = shadowA + a * (1 - shadowA);
+        r = rimC[0] * glowA + r * (1 - glowA);
+        g = rimC[1] * glowA + g * (1 - glowA);
+        b = rimC[2] * glowA + b * (1 - glowA);
+        a = glowA + a * (1 - glowA);
+        if (a < 0.004) {
           d[p + 3] = 0;
           continue;
         }
-        d[p] = (22 * shadowA + floor[0] * floorA * (1 - shadowA)) / sa;
-        d[p + 1] = (2 * shadowA + floor[1] * floorA * (1 - shadowA)) / sa;
-        d[p + 2] = (10 * shadowA + floor[2] * floorA * (1 - shadowA)) / sa;
-        d[p + 3] = sa * 255;
+        d[p] = r / a;
+        d[p + 1] = g / a;
+        d[p + 2] = b / a;
+        d[p + 3] = a * 255;
         continue;
       }
 
       // Ściana.
-      const deep = mixRgb(A.wallDeep, B.wallDeep, bs.t);
       const mid = mixRgb(A.wallMid, B.wallMid, bs.t);
-      const rimC = mixRgb(A.rim, B.rim, bs.t);
       const depthK = smooth(0, 70, dist);
 
       // Normalna: zaokrąglona krawędź (bevel) wygasająca w głąb ściany.
@@ -237,7 +258,10 @@ export class WallLayer {
       // Faktura: plamista tkanka + włókna + sieć naczyń włosowatych.
       const mottle = 0.5 + 0.5 * perlin(wx * 0.011, wy * 0.011, 91);
       const cells = perlin(wx * 0.05, wy * 0.05, 92);
-      const fiber = 0.9 + 0.1 * mottle + 0.05 * cells;
+      // Makrocieniowanie (tkanka nie jest jednolita) i drobne pory/krypty w głębi ściany.
+      const macro = 0.86 + 0.26 * (0.5 + 0.5 * perlin(wx * 0.0022, wy * 0.0022, 94));
+      const pore = smooth(0.55, 0.8, perlin(wx * 0.085, wy * 0.085, 96)) * depthK * 0.22;
+      const fiber = (0.9 + 0.1 * mottle + 0.05 * cells) * macro * (1 - pore);
       const vein = 1 - Math.abs(perlin(wx * 0.014 + 5, wy * 0.014 - 3, 93));
       const capillary = smooth(0.93, 0.99, vein) * (1 - depthK * 0.5);
       const grain = ((Math.imul(px * 73856093 ^ py * 19349663 ^ (i * 83492791 + j), 2654435761) >>> 24) / 255 - 0.5) * 2.5;

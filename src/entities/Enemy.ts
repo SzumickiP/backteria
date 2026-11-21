@@ -17,6 +17,11 @@ export type EnemyKind =
   | 'toxigen'
   | 'mycobacterium'
   | 'spirochete'
+  | 'pneumococcus'
+  | 'clostridium'
+  | 'staphylococcus'
+  | 'meningococcus'
+  | 'necrobacter'
   | 'leukocyte'
   | 'antibody'
   | 'macrophage'
@@ -24,6 +29,8 @@ export type EnemyKind =
   | 'lymphNode'
   | 'virusKing'
   | 'alphaMacrophage'
+  | 'sentinel'
+  | 'hostBrain'
   | 'vaccine';
 
 export interface EnemyDef {
@@ -58,6 +65,16 @@ export interface EnemyDef {
   flock?: boolean;
   /** boss: nie znika z oddali, ma pasek zdrowia */
   boss?: boolean;
+  /** szarża: co kilka sekund rzuca się na ofiarę z potrójną prędkością */
+  charge?: boolean;
+  /** regeneracja zdrowia (HP/s) */
+  regen?: number;
+  /** kontakt spowalnia gracza */
+  slow?: boolean;
+  /** teleportuje się tuż przed ofiarę */
+  blink?: boolean;
+  /** po śmierci wybucha: obrażenia graczowi w promieniu (px) */
+  explode?: { radius: number; damage: number };
 }
 
 export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
@@ -96,6 +113,29 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     name: 'Krętek', radius: 11, hp: 28, speed: 175, dps: 11, xp: 5, biomass: 2, minThreat: 1.2,
     texture: TEX.spirochete, texRadius: TEX_RADIUS.spirochete, burstColor: 0x67e8f9, motion: 'face', aggro: 750, flock: true,
   },
+  // Bakterie zależne od miejsca — każda ma własną umiejętność.
+  pneumococcus: {
+    name: 'Dwoinka zapalenia płuc (szarżuje)', radius: 12, hp: 55, speed: 85, dps: 16, xp: 7, biomass: 3, minThreat: 1.3,
+    texture: TEX.pneumococcus, texRadius: TEX_RADIUS.rod, burstColor: 0x93c5fd, motion: 'face', aggro: 700, flock: true, charge: true,
+  },
+  clostridium: {
+    name: 'Laseczka jelitowa (spowalnia)', radius: 17, hp: 80, speed: 62, dps: 14, xp: 8, biomass: 3, minThreat: 1.5,
+    texture: TEX.clostridium, texRadius: TEX_RADIUS.rod, burstColor: 0xfb923c, motion: 'face', aggro: 600, flock: true, slow: true,
+    flagella: { color: 0xc2763c, count: 2 },
+  },
+  staphylococcus: {
+    name: 'Gronkowiec (regeneruje się)', radius: 10, hp: 70, speed: 90, dps: 12, xp: 6, biomass: 2, minThreat: 1.2, group: 3,
+    texture: TEX.staphylococcus, texRadius: TEX_RADIUS.coccus, burstColor: 0xfde047, motion: 'spin', aggro: 650, flock: true, regen: 7,
+  },
+  meningococcus: {
+    name: 'Dwoinka zapalenia opon (teleportuje się)', radius: 11, hp: 45, speed: 100, dps: 18, xp: 9, biomass: 3, minThreat: 1.8,
+    texture: TEX.meningococcus, texRadius: TEX_RADIUS.coccus, burstColor: 0xe879f9, motion: 'spin', aggro: 750, blink: true,
+  },
+  necrobacter: {
+    name: 'Pałeczka martwicy (wybucha)', radius: 16, hp: 75, speed: 70, dps: 15, xp: 8, biomass: 3, minThreat: 1.4,
+    texture: TEX.necrobacter, texRadius: TEX_RADIUS.rod, burstColor: 0x78716c, motion: 'face', aggro: 600, flock: true,
+    explode: { radius: 110, damage: 22 }, flagella: { color: 0x57534e, count: 1 },
+  },
   leukocyte: {
     name: 'Biała krwinka', radius: 28, hp: 160, speed: 62, dps: 28, xp: 12, biomass: 0, minThreat: 0,
     texture: TEX.leukocyte, texRadius: TEX_RADIUS.leukocyte, burstColor: COLORS.burstLeukocyte, motion: 'spin', aggro: 600,
@@ -117,6 +157,16 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     name: 'Węzeł chłonny', radius: 50, hp: 420, speed: 0, dps: 22, xp: 35, biomass: 0, minThreat: 99,
     texture: TEX.organ, texRadius: TEX_RADIUS.organ, burstColor: 0xa5b4fc, motion: 'spin', aggro: 0,
   },
+  // Strażnicy wejść do mózgu i serca — silni, nie ustępują; stoją na posterunku.
+  sentinel: {
+    name: 'Strażnik wejścia', radius: 46, hp: 750, speed: 58, dps: 34, xp: 70, biomass: 0, minThreat: 99,
+    texture: TEX.macrophage, texRadius: TEX_RADIUS.leukocyte, burstColor: 0xfcd34d, motion: 'spin', aggro: 650, armor: 0.6,
+  },
+  // Ostateczny boss wirusa — Mózg Gospodarza; walka w zamkniętej arenie.
+  hostBrain: {
+    name: 'Mózg Gospodarza', radius: 80, hp: 2800, speed: 0, dps: 26, xp: 400, biomass: 0, minThreat: 99,
+    texture: TEX.organ, texRadius: TEX_RADIUS.organ, burstColor: 0xf0abfc, motion: 'spin', aggro: 900, boss: true, armor: 0.7,
+  },
   // Bossy z wyzwań — wielcy, wytrzymali, przywołują sługi.
   virusKing: {
     name: 'Król wirusów', radius: 72, hp: 1400, speed: 58, dps: 32, xp: 150, biomass: 30, minThreat: 99,
@@ -135,7 +185,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
 
 /** Wrogowie układu odpornościowego (reszta to patogeny). */
 export function isImmuneKind(k: EnemyKind): boolean {
-  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode' || k === 'alphaMacrophage' || k === 'vaccine';
+  return k === 'antibody' || k === 'leukocyte' || k === 'macrophage' || k === 'lymphNode' || k === 'alphaMacrophage' || k === 'sentinel' || k === 'hostBrain' || k === 'vaccine';
 }
 
 export class Enemy extends Cell {
@@ -161,6 +211,14 @@ export class Enemy extends Cell {
   missionTarget?: Organ;
   /** zadanie: ten wróg pilnuje narządu / gniazda */
   guardOf?: Cell;
+  /** posterunek przy wejściu do narządu: wróg wraca tu, gdy nikogo nie goni */
+  post?: { x: number; y: number };
+  /** uczestnik walki z Mózgiem (boss i jego bakterie) — nie walczą między sobą */
+  arena = false;
+  /** odliczanie do następnej umiejętności (szarża / teleport) */
+  abilityTimer = Phaser.Math.FloatBetween(2, 4);
+  /** do kiedy (czas gry) trwa szarża */
+  chargeUntil = 0;
 
   /** Statystyki rosną wraz z poziomem zagrożenia. */
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind, threat: number) {

@@ -31,7 +31,7 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     floor: [0, 0, 0],
     floorAlpha: 0,
     minimap: [150, 46, 70],
-    enemies: { virus: 3, germ: 1.5, coccus: 1, bacillus: 1 },
+    enemies: { virus: 3, germ: 1.5, coccus: 1, bacillus: 1, necrobacter: 1.5 },
     immune: { antibody: 3, leukocyte: 1.2 },
   },
   vessel: {
@@ -43,7 +43,7 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     floor: [140, 0, 14],
     floorAlpha: 0.22,
     minimap: [196, 40, 52],
-    enemies: { virus: 3, spirochete: 2.5, coccus: 1 },
+    enemies: { virus: 3, spirochete: 2.5, coccus: 1, staphylococcus: 2 },
     immune: { antibody: 4, leukocyte: 1 },
   },
   lung: {
@@ -55,7 +55,7 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     floor: [70, 46, 84],
     floorAlpha: 0.28,
     minimap: [226, 172, 188],
-    enemies: { mycobacterium: 2, coccus: 2, virus: 2 },
+    enemies: { mycobacterium: 2, coccus: 2, virus: 2, pneumococcus: 2.5 },
     immune: { antibody: 2, leukocyte: 1, macrophage: 1.5 },
   },
   gut: {
@@ -67,7 +67,7 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     floor: [80, 56, 0],
     floorAlpha: 0.22,
     minimap: [176, 112, 60],
-    enemies: { toxigen: 2.5, bacillus: 2, germ: 2, virus: 1 },
+    enemies: { toxigen: 2.5, bacillus: 2, germ: 2, virus: 1, clostridium: 2.5 },
     immune: { antibody: 3, leukocyte: 1.5 },
   },
   infected: {
@@ -92,7 +92,7 @@ export const BIOMES: Record<BiomeId, BiomeDef> = {
     floor: [70, 40, 70],
     floorAlpha: 0.25,
     minimap: [210, 170, 180],
-    enemies: { virus: 2.5, spirochete: 1.5, coccus: 1 },
+    enemies: { virus: 2.5, spirochete: 1.5, coccus: 1, meningococcus: 2.5 },
     immune: { antibody: 2, leukocyte: 1, macrophage: 1.2 },
   },
 };

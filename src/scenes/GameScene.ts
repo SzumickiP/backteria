@@ -47,7 +47,8 @@ import { organellesFor, type OrganelleDef, type PlacedOrganelle } from '../organ
 import { ACTIONS, isKey, settings, type Action } from '../settings';
 import { SPECIES, type SpeciesDef, type SpeciesId } from '../species';
 import { WallLayer } from '../world/WallLayer';
-import { currentAnimal, inStartZone, partAt, pickStartZone, setAnimal, setStartZone, startZone, type AnimalId } from '../world/animal';
+import { FogLayer } from '../graphics/fog';
+import { brainArena, currentAnimal, guardPosts, inStartZone, partAt, pickStartZone, setAnimal, setBrainArena, setStartZone, startZone, type AnimalId } from '../world/animal';
 import { BIOMES, type BiomeId } from '../world/biomes';
 import { Navigator, avoidWalls } from '../world/navigation';
 import { biomeAt, blockedCircle, findOpenSpot, isWall } from '../world/walls';
@@ -234,6 +235,23 @@ export class GameScene extends Phaser.Scene {
   private drifters: Drifter[] = [];
   private motes: Mote[] = [];
   private projectiles: Projectile[] = [];
+  /** do kiedy (czas gry) gracz jest spowolniony przez bakterie jelitowe */
+  private slowUntil = 0;
+  /** walka z ostatecznym bossem (Mózg Gospodarza) — tylko wirus */
+  private brainBoss?: Enemy;
+  private brainDone = false;
+  private brainWarned = false;
+  private brainDoorWarned = false;
+  private brainSummon = 0;
+  private brainStartAt = 0;
+  private brainMinHp = 1;
+  private sentinelKills = 0;
+  private brainRing = 0;
+  private deadBrain?: Enemy;
+  private arenaGfx!: Phaser.GameObjects.Graphics;
+  private fog!: FogLayer;
+  /** posterunki silnych strażników przy wejściach do mózgu i serca */
+  private posts: { x: number; y: number; organ: string; guards: Enemy[]; respawnAt: number }[] = [];
   /** czas podświetlenia gracza po trafieniu pociskiem */
   private playerHitFlash = 0;
   private dashTime = 0;
@@ -337,7 +355,8 @@ export class GameScene extends Phaser.Scene {
 
   /** Boss z wyzwania: do paska zdrowia i znaczników na mapach. */
   get bossInfo(): { name: string; hp: number; maxHp: number; x: number; y: number } | undefined {
-    const b = this.boss;
+    const bb = this.brainBoss;
+    const b = bb?.active && bb.hp > 0 ? bb : this.boss;
     if (!b?.active || b.hp <= 0) return undefined;
     return { name: b.def.name, hp: b.hp, maxHp: b.maxHp, x: b.x, y: b.y };
   }
@@ -355,6 +374,16 @@ export class GameScene extends Phaser.Scene {
     setAnimal(this.animal);
     // Losowe miejsce startu: strefa zarażona, w której łatwiej zacząć.
     setStartZone(pickStartZone(Math.random, START_ZONE.radius));
+    setBrainArena(this.species.id === 'virus');
+    this.brainBoss = undefined;
+    this.brainStartAt = 0;
+    this.brainMinHp = 1;
+    this.sentinelKills = 0;
+    this.brainDone = false;
+    this.brainWarned = false;
+    this.brainDoorWarned = false;
+    this.deadBrain = undefined;
+    this.posts = guardPosts().filter((p) => !inStartZone(p.x, p.y)).map((p) => ({ ...p, guards: [], respawnAt: 0 }));
     this.cloakTime = 0;
     this.cloakCd = 0;
     this.stats = { ...this.species.stats };
@@ -427,8 +456,10 @@ export class GameScene extends Phaser.Scene {
     createTextures(this);
     Cell.blocked = blockedCircle;
     this.walls = new WallLayer(this);
+    this.fog = new FogLayer(this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.walls.destroy();
+      this.fog.destroy();
       Cell.blocked = null;
     });
 
@@ -460,6 +491,7 @@ export class GameScene extends Phaser.Scene {
     this.hurtPulse = 0;
     this.organelleGfx = this.add.graphics().setDepth(5.2);
     this.bars = this.add.graphics().setDepth(10);
+    this.arenaGfx = this.add.graphics().setDepth(3.2);
 
     const cam = this.cameras.main;
     cam.removeBounds();
@@ -540,6 +572,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.updateAllies(dt);
     this.updateStructures(dt);
+    this.updateGuardPosts();
     this.updateEnemies(dt);
     this.updateOrganDefense(dt);
     this.updateProjectiles(dt);
@@ -549,6 +582,7 @@ export class GameScene extends Phaser.Scene {
     this.updateSpawning(dt);
     this.updateMission(dt);
     this.updateBoss(dt);
+    this.updateBrainArena(dt);
     this.updateHostEvents(dt);
     this.updateFriends(dt);
     this.player.hp = Math.min(this.stats.maxHp, this.player.hp + this.stats.regen * dt);
@@ -737,6 +771,7 @@ export class GameScene extends Phaser.Scene {
     // Ściany: generowane wokół gracza w tle, maks. ~4 ms na klatkę (bez zacięć).
     const z = cam.zoom || 1;
     this.walls.update(this.player.x, this.player.y, this.scale.width / 2 / z, this.scale.height / 2 / z, 4);
+    this.fog.update(dt, this.player.x, this.player.y);
 
     for (const d of this.drifters) {
       d.img.x += d.vx * dt;
@@ -832,7 +867,7 @@ export class GameScene extends Phaser.Scene {
       this.trail(p.x, p.y);
     } else {
       // Większy gracz jest nieco wolniejszy.
-      const speed = this.stats.speed * (this.species.baseRadius / p.radius) ** 0.25;
+      const speed = this.stats.speed * (this.species.baseRadius / p.radius) ** 0.25 * (this.elapsed < this.slowUntil ? 0.55 : 1);
       const x0 = p.x;
       const y0 = p.y;
       if (this.control === 'keyboard') {
@@ -859,6 +894,7 @@ export class GameScene extends Phaser.Scene {
     if (this.species.rod) p.faceMovement(dt);
     else p.rotation += dt * (this.dashTime > 0 ? 12 : 0.8);
     p.setPulse(1 + Math.sin(this.elapsed * 4) * 0.03);
+    if (!this.isVirus) p.wobble(this.elapsed, 0.035);
   }
 
   /** Kierunek ataku: do kursora (mysz) albo w kierunku ostatniego ruchu (klawiatura). */
@@ -1144,6 +1180,7 @@ export class GameScene extends Phaser.Scene {
         if (!b.tryMove(Math.cos(b.wander) * v, Math.sin(b.wander) * v)) b.wander += Math.PI * 0.7;
       }
       b.faceMovement(dt, 5);
+      b.wobble(this.elapsed);
       return true;
     });
 
@@ -1269,6 +1306,7 @@ export class GameScene extends Phaser.Scene {
       else a.rotation += dt * 2;
       // Wspólny rytm „oddechu” — kolonia pulsuje jednocześnie.
       a.setPulse(1 + Math.sin(this.elapsed * 4) * 0.04);
+      if (!this.isVirus) a.wobble(this.elapsed);
     });
   }
 
@@ -1520,6 +1558,7 @@ export class GameScene extends Phaser.Scene {
     const t = this.threat;
     const D = DIFFICULTY;
     const maxAlive = this.maxEnemies;
+    if (this.brainBoss) return; // w arenie nie ma losowych wrogów
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0 || this.enemies.length >= maxAlive) return;
 
@@ -1564,6 +1603,8 @@ export class GameScene extends Phaser.Scene {
     // Osiągnięcia sprawdzane okresowo.
     if (this.elapsed >= 180) this.achieve('survivor');
     if (this.elapsed >= 600) this.achieve('veteran');
+    if (this.elapsed >= 1200) this.achieve('survivor20');
+    if (this.elapsed >= 600 && this.mode === 'hard') this.achieve('hard-veteran');
     if (this.allies.length >= 5) this.achieve('colony');
     if (this.allies.length >= 10) this.achieve('colony10');
     if (this.elapsed >= 300) this.achieve('survivor5');
@@ -1651,20 +1692,20 @@ export class GameScene extends Phaser.Scene {
       if (this.elapsed < e.giveUpUntil) continue;
       let v = this.isPeaceful(e) ? undefined : this.nearest(victims, e.x, e.y, e.aggro * this.stats.stealth);
       // Patogeny i układ odpornościowy walczą ze sobą: bliższy wróg przeciwnej frakcji ma pierwszeństwo.
-      const foe = this.nearest(isImmuneKind(e.kind) ? pathogenFoes : immuneFoes, e.x, e.y, 260);
+      const foe = e.arena ? undefined : this.nearest(isImmuneKind(e.kind) ? pathogenFoes : immuneFoes, e.x, e.y, 260);
       if (foe && (!v || dist(e, foe) < dist(e, v))) v = foe;
       if (!v) continue;
       victimOf.set(e, v);
       // Długi pościg bez dosięgnięcia ofiary → wróg odpuszcza.
       if (dist(e, v) < e.radius + v.radius + 12) e.chaseTime = 0;
       else e.chaseTime += dt;
-      if (e.chaseTime > GIVE_UP.after && !e.missionTarget && !e.guardOf && !e.def.boss) {
+      if (e.chaseTime > GIVE_UP.after && !e.missionTarget && !e.guardOf && !e.post && !e.def.boss) {
         e.chaseTime = 0;
         e.giveUpUntil = this.elapsed + GIVE_UP.duration;
         victimOf.delete(e);
         continue;
       }
-      if (e.def.shooter || e.missionTarget || e.guardOf) continue;
+      if (e.def.shooter || e.missionTarget || e.guardOf || e.post) continue;
       let byK = packs.get(v);
       if (!byK) packs.set(v, (byK = new Map()));
       const list = byK.get(e.kind);
@@ -1721,6 +1762,32 @@ export class GameScene extends Phaser.Scene {
         return true;
       }
 
+      // Umiejętności bakterii zależnych od miejsca.
+      const df = e.def;
+      if (df.regen && e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + df.regen * dt);
+      if (victim && (df.charge || df.blink)) {
+        e.abilityTimer -= dt;
+        const dv = dist(e, victim);
+        if (e.abilityTimer <= 0 && dv < 520 && dv > 90) {
+          if (df.charge) {
+            e.chargeUntil = this.elapsed + 0.7;
+            e.abilityTimer = 4;
+          } else {
+            // Teleport tuż przed ofiarę (jeśli miejsce nie jest ścianą).
+            const a = Math.atan2(e.y - victim.y, e.x - victim.x);
+            const bx = victim.x + Math.cos(a) * (victim.radius + e.radius + 40);
+            const by = victim.y + Math.sin(a) * (victim.radius + e.radius + 40);
+            if (!isWall(bx, by)) {
+              this.burst(e.x, e.y, df.burstColor, 6);
+              e.setPosition(bx, by);
+              this.burst(bx, by, df.burstColor, 6);
+            }
+            e.abilityTimer = 5;
+          }
+        }
+      }
+      if (e.chargeUntil > this.elapsed) speed *= 3.2;
+
       // Pałeczka toksynotwórcza: trzyma dystans i strzela.
       if (e.def.shooter && victim && !e.missionTarget) {
         const d = dist(e, victim);
@@ -1749,6 +1816,11 @@ export class GameScene extends Phaser.Scene {
         const a = this.elapsed * 0.4 + e.phase;
         target = { x: g.x + Math.cos(a) * (g.radius + 90), y: g.y + Math.sin(a) * (g.radius + 90) };
         speed *= 0.6;
+      } else if (e.post && (!victim || dist(victim, e.post) > 650)) {
+        // Strażnik wraca na posterunek i krąży przy wejściu.
+        const a = this.elapsed * 0.35 + e.phase;
+        target = { x: e.post.x + Math.cos(a) * 110, y: e.post.y + Math.sin(a) * 110 };
+        speed *= 0.7;
       } else if (victim) {
         const slot = surround.get(e);
         if (slot) {
@@ -1783,8 +1855,10 @@ export class GameScene extends Phaser.Scene {
 
       if (e.motion === 'spin') e.rotation += dt * (e.kind === 'virus' ? 1.5 : e.radius < 10 ? 2 : 0.3);
       else e.faceMovement(dt, e.kind === 'antibody' || e.kind === 'spirochete' ? 8 : 3);
+      // Bakterie falują jak kropla płynu.
+      if (!isImmuneKind(e.kind) && e.kind !== 'virus' && !e.def.boss) e.wobble(this.elapsed);
 
-      if (!e.missionTarget && !e.guardOf && !e.def.boss && e.speed > 0 && dist(e, pl) > ENEMY_DESPAWN_RADIUS) {
+      if (!e.missionTarget && !e.guardOf && !e.def.boss && e.speed > 0 && !e.post && dist(e, pl) > ENEMY_DESPAWN_RADIUS) {
         e.destroy();
         return false;
       }
@@ -1795,7 +1869,7 @@ export class GameScene extends Phaser.Scene {
     const limit = this.maxEnemies;
     if (this.enemies.length > limit) {
       const removable = this.enemies
-        .filter((e) => !e.missionTarget && !e.guardOf && !e.def.boss && e.speed > 0 && dist(e, pl) > GIVE_UP.excessFar)
+        .filter((e) => !e.missionTarget && !e.guardOf && !e.post && !e.def.boss && e.speed > 0 && dist(e, pl) > GIVE_UP.excessFar)
         .sort((a, b) => dist(b, pl) - dist(a, pl));
       const drop = new Set(removable.slice(0, this.enemies.length - limit));
       if (drop.size) {
@@ -1845,7 +1919,7 @@ export class GameScene extends Phaser.Scene {
   private isPeaceful(e: Enemy): boolean {
     if (e.provoked) return false;
     if (this.isVirus) return !isImmuneKind(e.kind);
-    return isImmuneKind(e.kind) && !e.def.boss && !e.missionTarget && !e.guardOf;
+    return isImmuneKind(e.kind) && !e.def.boss && !e.missionTarget && !e.guardOf && !e.post;
   }
 
   private resolveCombat(dt: number): void {
@@ -1876,10 +1950,12 @@ export class GameScene extends Phaser.Scene {
       // Podczas szarży gracz jest nietykalny.
       if (!dashing && dPl < pl.radius + e.radius + 2) {
         pl.hp -= e.dps * s.armor * dt;
+        if (e.def.slow) this.slowUntil = this.elapsed + 2;
         playerHurt = true;
         audio.sfx('hurt');
       }
       for (const o of isImmuneKind(e.kind) ? pathogenList : immuneList) {
+        if (e.arena && o.arena) continue;
         const reach = o.radius + e.radius + 3;
         const ox = e.x - o.x;
         const oy = e.y - o.y;
@@ -1963,11 +2039,23 @@ export class GameScene extends Phaser.Scene {
       audio.sfx(e.radius > 20 ? 'popBig' : 'pop');
       this.achieve('first-blood');
       if (e === this.boss) this.onBossDefeated(e);
+      if (e === this.brainBoss) this.onBrainDefeated(e);
       if (this.kills >= 100) this.achieve('hunter');
       if (this.kills >= 30) this.achieve('slayer30');
       if (this.kills >= 300) this.achieve('exterminator');
+      if (this.kills >= 600) this.achieve('massacre');
+      if (e.kind === 'sentinel' && ++this.sentinelKills >= 5) this.achieve('sentinel-slayer');
       if (e.kind === 'mycobacterium' || e.kind === 'macrophage') this.achieve('giant-slayer');
       // Laseczka przetrwalnikowa: po śmierci uwalnia przetrwalniki.
+      const ex = e.def.explode;
+      if (ex) {
+        this.burst(e.x, e.y, 0xef4444, 22);
+        if (!this.isPeaceful(e) && dist(e, pl) < ex.radius + pl.radius && this.dashTime <= 0) {
+          pl.hp -= ex.damage * this.stats.armor;
+          this.playerHitFlash = 0.15;
+          this.hurtPulse = 1;
+        }
+      }
       const od = e.def.onDeath;
       if (od) for (let i = 0; i < od.count; i++) spawned.push([od.kind, { x: e.x + Phaser.Math.Between(-12, 12), y: e.y + Phaser.Math.Between(-12, 12) }]);
       e.destroy();
@@ -2107,7 +2195,7 @@ export class GameScene extends Phaser.Scene {
   private updateMission(dt: number): void {
     const m = this.mission;
     if (!m) {
-      if (this.elapsed >= this.nextMissionAt) this.startMission();
+      if (this.elapsed >= this.nextMissionAt && !this.brainBoss) this.startMission();
       return;
     }
     m.timeLeft -= dt;
@@ -2224,6 +2312,181 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.spawnBoss(this.isVirus ? 'alphaMacrophage' : 'virusKing', p);
+  }
+
+  // ───────────────────────── ostateczny boss: Mózg Gospodarza ─────────────────────────
+
+  /** Osłabienia Mózgu wynikające z zarażonych narządów (każdy układ działa inaczej). */
+  private brainWeakness(): { regen: number; summonEvery: number; dmgMul: number; armorMul: number; maxMinions: number; lines: string[] } {
+    const w = { regen: 14, summonEvery: 7, dmgMul: 1, armorMul: 0.7, maxMinions: 8, lines: [] as string[] };
+    for (const name of this.conquered) {
+      if (name === 'Mózg') continue;
+      const system = currentAnimal().organs.find((o) => o.name === name)?.system;
+      if (name === 'Serce') {
+        w.regen = 0;
+        w.lines.push('Serce: brak regeneracji');
+      } else if (system === 'circulatory') {
+        w.summonEvery *= 1.35;
+        w.lines.push(`${name}: wolniejsze przywoływanie`);
+      } else if (system === 'respiratory') {
+        w.dmgMul *= 0.85;
+        w.lines.push(`${name}: słabsze ataki`);
+      } else if (system === 'digestive') {
+        w.armorMul += 0.07;
+        w.lines.push(`${name}: kruchszy pancerz`);
+      } else if (system === 'nervous') {
+        w.maxMinions -= 2;
+        w.lines.push(`${name}: mniej sług`);
+      }
+    }
+    w.maxMinions = Math.max(3, w.maxMinions);
+    return w;
+  }
+
+  private updateBrainArena(dt: number): void {
+    const ar = brainArena();
+    const g = this.arenaGfx;
+    g.clear();
+    if (!ar || !this.isVirus || this.over) return;
+
+    // Sługi pokonanego Mózgu znikają razem z nim.
+    const dead = this.deadBrain;
+    if (dead) {
+      this.deadBrain = undefined;
+      const minions = this.enemies.filter((e) => e.guardOf === dead);
+      for (const e of minions) {
+        this.burst(e.x, e.y, e.burstColor, 6);
+        e.destroy();
+      }
+      const gone = new Set<Enemy>(minions);
+      this.enemies = this.enemies.filter((e) => !gone.has(e));
+    }
+    if (this.brainDone) return;
+
+    const pl = this.player;
+    const d = Math.hypot(pl.x - ar.x, pl.y - ar.y);
+    const boss = this.brainBoss;
+
+    if (!boss) {
+      // Ostrzeżenia przed wejściem (dwa stopnie).
+      if (d > 4800) {
+        this.brainWarned = false;
+        this.brainDoorWarned = false;
+      }
+      if (d < 3200 && !this.brainWarned) {
+        this.brainWarned = true;
+        const w = this.brainWeakness();
+        const weak = w.lines.length ? w.lines.slice(0, 3).join('; ') + (w.lines.length > 3 ? '…' : '') : 'brak — zaraź narządy, by go osłabić';
+        this.game.events.emit(GameEvents.MissionStart, '⚠ Mózg Gospodarza — ostatnia walka', `Zamknięta arena, bez odwrotu. Osłabienia: ${weak}`);
+        audio.sfx('alarm');
+      }
+      if (d < ar.r + 450 && !this.brainDoorWarned) {
+        this.brainDoorWarned = true;
+        this.game.events.emit(GameEvents.Toast, '⚠ Za progiem wejście się zamknie — wyjdziesz tylko po zwycięstwie');
+        audio.sfx('alarm');
+      }
+      // Rysunek komnaty: pulsujący czerwony obrys widoczny z daleka.
+      if (d < 4000) {
+        const pulse = 0.35 + 0.25 * Math.sin(this.elapsed * 3);
+        g.lineStyle(4, 0xef4444, pulse);
+        g.strokeCircle(ar.x, ar.y, ar.r);
+      }
+      if (d < ar.r - 60) this.startBrainFight(ar);
+      return;
+    }
+
+    // Walka trwa: zamknięta arena — gracz nie wyjdzie poza okrąg.
+    const maxD = ar.r - pl.radius - 10;
+    if (d > maxD) {
+      pl.setPosition(ar.x + ((pl.x - ar.x) / d) * maxD, ar.y + ((pl.y - ar.y) / d) * maxD);
+    }
+    g.lineStyle(6, 0xf43f5e, 0.55 + 0.3 * Math.sin(this.elapsed * 6));
+    g.strokeCircle(ar.x, ar.y, ar.r - 4);
+    this.nextMissionAt = Math.max(this.nextMissionAt, this.elapsed + 5);
+    this.brainMinHp = Math.min(this.brainMinHp, pl.hp / pl.maxHp);
+    if (!boss.active || boss.hp <= 0) return;
+
+    const w = this.brainWeakness();
+    if (w.regen > 0) boss.hp = Math.min(boss.maxHp, boss.hp + w.regen * dt);
+    const enraged = boss.hp < boss.maxHp * 0.5;
+
+    // Przywołuje bakterie.
+    this.brainSummon -= dt;
+    if (this.brainSummon <= 0) {
+      this.brainSummon = w.summonEvery * (enraged ? 0.7 : 1);
+      const count = this.enemies.filter((e) => e.guardOf === boss).length;
+      const pool: EnemyKind[] = ['coccus', 'germ', 'spirochete', 'bacillus', 'toxigen', 'staphylococcus', 'necrobacter', 'meningococcus'];
+      for (let i = 0; i < 2 && count + i < w.maxMinions; i++) {
+        const kind = Phaser.Utils.Array.GetRandom(pool);
+        const a = Math.random() * Math.PI * 2;
+        const r = boss.radius + 70 + Math.random() * 80;
+        const m = this.spawnEnemy(kind, { x: boss.x + Math.cos(a) * r, y: boss.y + Math.sin(a) * r });
+        m.guardOf = boss;
+        m.arena = true;
+        m.provoked = true; // bakterie Mózgu atakują wirusa
+      }
+      this.ringFx(boss.x, boss.y, boss.burstColor, boss.radius * 3);
+    }
+
+    // Fala toksyn we wszystkie strony.
+    this.brainRing -= dt;
+    if (this.brainRing <= 0) {
+      this.brainRing = enraged ? 2.6 : 4;
+      const n = enraged ? 16 : 10;
+      const phase = Math.random() * Math.PI * 2;
+      for (let i = 0; i < n; i++) this.fireBrainShot(boss, phase + (i / n) * Math.PI * 2, 8 * w.dmgMul * (1 + 0.05 * (this.threat - 1)));
+    }
+  }
+
+  private fireBrainShot(from: Enemy, a: number, damage: number): void {
+    const speed = 230;
+    const img = this.add
+      .image(from.x + Math.cos(a) * from.radius, from.y + Math.sin(a) * from.radius, TEX.blob)
+      .setTint(0xe879f9)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScale(0.9)
+      .setDepth(4.5);
+    this.projectiles.push({ img, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, speed, life: 3, damage, hostile: true, burstColor: 0xe879f9 });
+  }
+
+  private startBrainFight(ar: { x: number; y: number }): void {
+    const w = this.brainWeakness();
+    const boss = this.spawnEnemy('hostBrain', { x: ar.x, y: ar.y });
+    boss.arena = true;
+    boss.baseTint = 0xf0abfc;
+    boss.resetTint();
+    boss.armorMul = w.armorMul;
+    (boss as { dps: number }).dps *= w.dmgMul;
+    this.brainBoss = boss;
+    this.brainSummon = 3;
+    this.brainRing = 4;
+    this.brainStartAt = this.elapsed;
+    this.brainMinHp = 1;
+    this.ringFx(ar.x, ar.y, boss.burstColor, boss.radius * 5);
+    this.cameras.main.shake(400, 0.008);
+    this.game.events.emit(GameEvents.MissionStart, 'Mózg Gospodarza', 'Wejście zamknięte! Zadawaj obrażenia — on przywołuje bakterie');
+    audio.sfx('alarm');
+  }
+
+  private onBrainDefeated(b: Enemy): void {
+    this.brainBoss = undefined;
+    this.brainDone = true;
+    this.deadBrain = b;
+    this.arenaGfx.clear();
+    this.achieve('brain-slayer');
+    if (this.elapsed - this.brainStartAt < 90) this.achieve('brain-fast');
+    if (this.brainMinHp >= 0.5) this.achieve('brain-untouched');
+    if (this.mode === 'hard') this.achieve('brain-hard');
+    if (this.conquered.has('Serce') && this.conquered.size >= 5) this.achieve('brain-surgeon');
+    this.dna += BOSS.dna * 2;
+    for (let i = 0; i < 5; i++) {
+      this.time.delayedCall(i * 220, () => this.ringFx(b.x, b.y, i % 2 ? 0xfde68a : b.burstColor, b.radius * (3 + i * 1.5)));
+    }
+    this.cameras.main.flash(600, 240, 171, 252);
+    this.cameras.main.shake(450, 0.012);
+    this.game.events.emit(GameEvents.MissionEnd, 'Mózg Gospodarza', true, `Mózg podbity! Nagroda: +${BOSS.dna * 2} DNA`, true);
+    audio.sfx('success');
+    this.addConquest('Mózg', CONQUEST_PER_ORGAN, true);
   }
 
   private spawnBoss(kind: EnemyKind, p: Point): void {
@@ -2361,6 +2624,37 @@ export class GameScene extends Phaser.Scene {
     if (!p) return;
     const kind: EnemyKind = Math.random() < Math.min(0.4, 0.08 * this.threat) ? 'germ' : 'virus';
     this.spawnEnemy(kind, p).missionTarget = organ;
+  }
+
+  /** Strażnicy wejść do mózgu i serca: pojawiają się, gdy gracz jest blisko; po pokonaniu wracają po 5 min. */
+  private updateGuardPosts(): void {
+    const pl = this.player;
+    for (const post of this.posts) {
+      const d = Math.hypot(post.x - pl.x, post.y - pl.y);
+      const alive = post.guards.filter((g) => g.active && g.hp > 0);
+      if (d > 3200) {
+        // Gracz daleko — strażnicy znikają (wrócą w pełni zdrowi).
+        if (alive.length === post.guards.length) {
+          for (const g of alive) g.destroy();
+          this.enemies = this.enemies.filter((e) => !alive.includes(e));
+          post.guards = [];
+        }
+        continue;
+      }
+      if (post.guards.length && !alive.length) {
+        // Wszyscy pokonani.
+        post.guards = [];
+        post.respawnAt = this.elapsed + 300;
+      }
+      if (post.guards.length || this.elapsed < post.respawnAt || d > 1700) continue;
+      const count = 2 + (this.threat >= 4 ? 1 : 0);
+      for (let i = 0; i < count; i++) {
+        const spot = findOpenSpot(50, post.x + Phaser.Math.Between(-80, 80), post.y + Phaser.Math.Between(-80, 80));
+        const g = this.spawnEnemy('sentinel', spot);
+        g.post = { x: post.x, y: post.y };
+        post.guards.push(g);
+      }
+    }
   }
 
   private spawnGuard(kind: EnemyKind, around: Cell): void {
@@ -2511,8 +2805,10 @@ export class GameScene extends Phaser.Scene {
   // ───────────────────────── podbój organizmu (wirus) ─────────────────────────
 
   /** Dodaje postęp podboju narządu; po osiągnięciu progu narząd jest podbity. */
-  private addConquest(name: string, amount: number): void {
+  private addConquest(name: string, amount: number, force = false): void {
     if (!this.isVirus || this.over || this.conquered.has(name) || !this.organNames.includes(name)) return;
+    // Mózg podbija się tylko pokonując jego bossa.
+    if (name === 'Mózg' && !force) return;
     const v = (this.conquest.get(name) ?? 0) + amount;
     this.conquest.set(name, v);
     if (v < CONQUEST_PER_ORGAN) return;
@@ -2643,6 +2939,7 @@ export class GameScene extends Phaser.Scene {
       audio.sfx('levelup');
       if (this.level >= 5) this.achieve('level5');
       if (this.level >= 20) this.achieve('level20');
+      if (this.level >= 30) this.achieve('level30');
       if (this.level >= 10) this.achieve('level10');
       this.pendingLevelUps++;
       if (this.level % DNA.everyLevels === 0) {

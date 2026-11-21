@@ -170,9 +170,21 @@ export class Cell extends Phaser.GameObjects.Image {
 
   private stretchX = 1;
   private stretchY = 1;
+  private jellyX = 1;
+  private jellyY = 1;
+
+  /** Płynne, galaretowate falowanie ciała (jak kropla) — zachowuje mniej więcej stałą objętość. */
+  wobble(t: number, amp = 0.045): this {
+    const ph = this.swimPhase;
+    const a = Math.sin(t * 5.2 + ph) * amp + Math.sin(t * 8.3 + ph * 1.9) * amp * 0.35;
+    this.jellyX = 1 + a;
+    this.jellyY = 1 - a * 0.9;
+    this.applyScale();
+    return this;
+  }
 
   private applyScale(): void {
     const s = (this._radius / this.texRadius) * this.pulse;
-    this.setScale(s * this.stretchX, s * this.stretchY);
+    this.setScale(s * this.stretchX * this.jellyX, s * this.stretchY * this.jellyY);
   }
 }

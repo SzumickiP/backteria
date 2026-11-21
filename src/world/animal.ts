@@ -409,3 +409,122 @@ export function regionAt(x: number, y: number): RegionSample {
   const t = nearest && nearestD < BLEND ? 0.5 * (1 - smooth(0, BLEND, nearestD)) : 0;
   return { a: 'tissue', b: nearest?.biome ?? 'tissue', t, name, channel };
 }
+
+/** Najważniejsze narządy — ich wejścia pilnują silni strażnicy. */
+const GUARDED_ORGANS = ['Mózg', 'Serce'];
+
+export interface GuardPost {
+  x: number;
+  y: number;
+  organ: string;
+}
+
+function shapeCenter(s: Shape): [number, number] {
+  return s.kind === 'ellipse' ? [s.x, s.y] : [(s.ax + s.bx) / 2, (s.ay + s.by) / 2];
+}
+
+/**
+ * Posterunki strażników: miejsca, w których kanał (rdzeń, naczynia) wchodzi do mózgu lub serca.
+ * Szukamy ich promieniami od środka narządu; sąsiednie trafienia łączymy w jedno wejście.
+ */
+export function guardPosts(): GuardPost[] {
+  const posts: GuardPost[] = [];
+  for (const organ of current.organs) {
+    if (!GUARDED_ORGANS.includes(organ.name)) continue;
+    const [cx, cy] = shapeCenter(organ.shapes[0]);
+    const hits: { x: number; y: number }[] = [];
+    let fallback: { x: number; y: number } | undefined;
+    for (let i = 0; i < 72; i++) {
+      const a = (i / 72) * Math.PI * 2;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      // Brzeg narządu na tym promieniu.
+      let r = 0;
+      while (r < 12000 && shapesDist(organ.shapes, cx + dx * r, cy + dy * r) < 0) r += 40;
+      const bx = cx + dx * r;
+      const by = cy + dy * r;
+      // Wejście: tuż za brzegiem jest wnętrze kanału (inny narząd z flagą channel).
+      const px = bx + dx * 260;
+      const py = by + dy * 260;
+      if (current.organs.some((o) => o.channel && o !== organ && shapesDist(o.shapes, px, py) < 0)) hits.push({ x: px, y: py });
+      if (!fallback && Math.hypot(bx, by) < Math.hypot(cx, cy)) fallback = { x: px, y: py };
+    }
+    // Łączenie trafień leżących blisko siebie w pojedyncze wejścia.
+    const groups: { x: number; y: number; n: number }[] = [];
+    for (const h of hits) {
+      const g = groups.find((q) => Math.hypot(q.x / q.n - h.x, q.y / q.n - h.y) < 900);
+      if (g) {
+        g.x += h.x;
+        g.y += h.y;
+        g.n++;
+      } else groups.push({ x: h.x, y: h.y, n: 1 });
+    }
+    if (groups.length) for (const g of groups) posts.push({ x: g.x / g.n, y: g.y / g.n, organ: organ.name });
+    else if (fallback) posts.push({ ...fallback, organ: organ.name });
+  }
+  return posts;
+}
+
+// ───────────────────────── arena ostatecznego bossa (Mózg) ─────────────────────────
+
+/** Zamknięta komnata w mózgu z korytarzem do wejścia (rdzenia kręgowego). */
+export interface BrainArena {
+  x: number;
+  y: number;
+  r: number;
+  /** kierunek od środka komnaty do wejścia (wektor jednostkowy) */
+  dx: number;
+  dy: number;
+  /** długość korytarza od środka komnaty (px); 0 = brak */
+  len: number;
+}
+
+let arena: BrainArena | undefined;
+
+export function brainArena(): BrainArena | undefined {
+  return arena;
+}
+
+/** Włącza (wirus) lub wyłącza komnatę bossa dla bieżącego zwierzęcia. Wywołać po setAnimal. */
+export function setBrainArena(on: boolean): void {
+  arena = undefined;
+  if (!on) return;
+  const brain = current.organs.find((o) => o.name === 'Mózg');
+  if (!brain) return;
+  const [cx, cy] = shapeCenter(brain.shapes[0]);
+  const post = guardPosts().find((p) => p.organ === 'Mózg');
+  let dx = 1;
+  let dy = 0;
+  let x = cx;
+  let y = cy;
+  let len = 0;
+  if (post) {
+    const vx = cx - post.x;
+    const vy = cy - post.y;
+    const vl = Math.hypot(vx, vy) || 1;
+    // Komnata leży 1300 px od wejścia w głąb mózgu, korytarz prowadzi z powrotem do wejścia.
+    const inward = Math.min(1300, vl);
+    x = post.x + (vx / vl) * inward;
+    y = post.y + (vy / vl) * inward;
+    dx = -vx / vl;
+    dy = -vy / vl;
+    len = inward + 120;
+  }
+  arena = { x, y, r: 700, dx, dy, len };
+}
+
+/** Nadpisanie „otwartości” świata przez komnatę i korytarz; undefined = poza wpływem. */
+export function arenaOpenness(x: number, y: number, o: number): number {
+  const a = arena;
+  if (!a) return o;
+  const ex = x - a.x;
+  const ey = y - a.y;
+  if (Math.abs(ex) > a.r + 90 + a.len || Math.abs(ey) > a.r + 90 + a.len) return o;
+  const d = Math.hypot(ex, ey);
+  const u = ex * a.dx + ey * a.dy;
+  const v = -ex * a.dy + ey * a.dx;
+  const corridor = u > 0 && u < a.len && Math.abs(v) < 130 ? (130 - Math.abs(v)) / 600 : -Infinity;
+  // Komnata: wolne wnętrze i ściana wokół (z przejściem na korytarz).
+  if (d < a.r + 90) return Math.max((a.r - d) / 600, corridor);
+  return Math.max(o, corridor);
+}
